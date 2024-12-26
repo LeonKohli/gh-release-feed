@@ -57,7 +57,7 @@
                             </div>
                             <div v-if="rateLimitResetAt" class="flex items-center justify-between gap-4">
                               <span class="text-muted-foreground">Rate Limit Resets:</span>
-                              <span class="font-medium">{{ new Date(rateLimitResetAt).toLocaleTimeString() }}</span>
+                              <span class="font-medium">{{ formatResetTime }}</span>
                             </div>
                             <div class="pt-1 text-xs text-muted-foreground">
                               Loading releases from starred repositories...
@@ -174,7 +174,7 @@
           </div>
 
           <div v-if="hasMoreReleases" ref="loadMoreTrigger" class="py-6 text-center sm:py-8">
-            <Button v-if="!loading" @click="loadMore" class="w-full sm:w-auto">Load More</Button>
+            <Button v-if="!loading" @click="page++" class="w-full sm:w-auto">Load More</Button>
             <div v-else class="flex justify-center">
               <div class="w-8 h-8 border-4 rounded-full animate-spin border-primary border-t-transparent"></div>
             </div>
@@ -187,6 +187,15 @@
 
 <script setup lang="ts">
 import { LogInIcon, LogOutIcon, AlertCircleIcon } from 'lucide-vue-next'
+import { useStorage, useDocumentVisibility, useElementVisibility, useTimeAgo, useEventListener } from '@vueuse/core'
+
+// Use document visibility to pause/resume loading when tab is hidden
+const visibility = useDocumentVisibility()
+watch(visibility, (currentVisibility) => {
+  if (currentVisibility === 'visible' && loggedIn.value) {
+    fetchReleases()
+  }
+})
 
 const { loggedIn, clear } = useUserSession()
 const {
@@ -213,54 +222,73 @@ const hasMoreReleases = computed(() => {
   return visibleReleases.value.length < (releases.value?.length || 0)
 })
 
+// Use element visibility for infinite scroll with options
 const loadMoreTrigger = ref<HTMLElement | null>(null)
+const isLoadMoreVisible = useElementVisibility(loadMoreTrigger)
 
-const loadMore = () => {
-  page.value++
-}
+// Use throttle for smoother scroll loading
+const handleLoadMore = useThrottleFn(() => {
+  if (!loading.value && hasMoreReleases.value) {
+    page.value++
+  }
+}, 500)
 
-// Force refresh releases
-const handleRefresh = async () => {
+// Watch visibility with throttled handler
+watchDebounced(
+  isLoadMoreVisible,
+  (visible) => {
+    if (visible) handleLoadMore()
+  },
+  { debounce: 100 }
+)
+
+// Force refresh releases with better error handling
+const refreshEvent = createEventHook<Error>()
+refreshEvent.on((error) => {
+  console.error('Error refreshing releases:', error)
+})
+
+const handleRefresh = useDebounceFn(async () => {
   if (loading.value) return
   try {
     page.value = 1 // Reset to first page
     await clearCache() // Clear the cache first
     await fetchReleases() // Then fetch fresh data
   } catch (error) {
-    console.error('Error refreshing releases:', error)
+    if (error instanceof Error) {
+      refreshEvent.trigger(error)
+    }
   }
-}
+}, 300)
 
-// Use intersection observer for infinite scroll
-if (process.client) {
-  const observer = new IntersectionObserver(
-    (entries) => {
-      const entry = entries[0]
-      if (entry?.isIntersecting && !loading.value && hasMoreReleases.value) {
-        loadMore()
-      }
-    },
-    { threshold: 0.5 }
-  )
+// Use time ago with options for rate limit reset time
+const formatResetTime = computed(() => {
+  if (!rateLimitResetAt.value) return ''
+  return useTimeAgo(new Date(rateLimitResetAt.value)).value
+})
 
-  onMounted(() => {
-    if (loadMoreTrigger.value) {
-      observer.observe(loadMoreTrigger.value)
+// Initial data loading
+const { isLoading } = useAsyncState(
+  async () => {
+    if (loggedIn.value) {
+      await fetchReleases()
     }
-  })
-
-  onUnmounted(() => {
-    if (loadMoreTrigger.value) {
-      observer.unobserve(loadMoreTrigger.value)
+  },
+  null,
+  {
+    immediate: true,
+    onError: (error) => {
+      console.error('Error loading initial data:', error)
     }
-    observer.disconnect()
-  })
-}
+  }
+)
 
-// Fetch releases when logged in
-watchEffect(async () => {
-  if (loggedIn.value) {
-    await fetchReleases()
+// Keyboard shortcuts
+useEventListener(document, 'keydown', (e: KeyboardEvent) => {
+  // Refresh on Ctrl/Cmd + R
+  if ((e.ctrlKey || e.metaKey) && e.key === 'r' && !loading.value) {
+    e.preventDefault()
+    handleRefresh()
   }
 })
 
@@ -269,7 +297,7 @@ async function handleLogout() {
   navigateTo('/login')
 }
 
-// Add SEO metadata
+// SEO metadata
 useHead({
   title: 'GitHub Release Feed',
   meta: [
