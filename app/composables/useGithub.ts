@@ -50,6 +50,7 @@ interface GraphQLResponse {
                                 isDraft: boolean
                                 isPrerelease: boolean
                                 name: string
+                                tagName: string
                                 publishedAt: string
                                 updatedAt: string
                                 url: string
@@ -125,7 +126,6 @@ const METADATA_KEY = 'github-releases-metadata'
 
 export const useGithubStore = defineStore('github', {
     state: () => ({
-        token: null as string | null,
         releases: [] as ReleaseObj[],
         loading: false,
         progress: 0,
@@ -142,13 +142,12 @@ export const useGithubStore = defineStore('github', {
     }),
 
     actions: {
-        setToken(token: string) {
-            this.token = token
-            localStorage.setItem('github_token', token)
+        setError(error: any) {
+            this.error = error?.message || 'An unknown error occurred'
+            this.loading = false
         },
 
-        clearToken() {
-            this.token = null
+        clearData() {
             this.releases = []
             this.loading = false
             this.progress = 0
@@ -156,15 +155,15 @@ export const useGithubStore = defineStore('github', {
             this.lastFetchTimestamp = null
             this.reposProcessed = 0
             this.retries = 0
-            localStorage.removeItem('github_token')
-        },
-
-        setError(error: any) {
-            this.error = error?.message || 'An unknown error occurred'
-            this.loading = false
         },
 
         async initDB() {
+            // Only initialize IndexedDB in the browser
+            if (process.server) {
+                console.log('Skipping IndexedDB initialization on server')
+                return
+            }
+
             try {
                 this.db = await openDB<GithubReleasesDBSchema>('github-releases', 2, {
                     upgrade(db, oldVersion) {
@@ -199,10 +198,14 @@ export const useGithubStore = defineStore('github', {
         },
 
         async loadCachedReleases() {
+            if (process.server) {
+                return false
+            }
+
             if (!this.db) {
                 await this.initDB()
             }
-            if (!this.db) return
+            if (!this.db) return false
 
             try {
                 // Get all releases from IndexedDB
@@ -224,7 +227,7 @@ export const useGithubStore = defineStore('github', {
         },
 
         async updateMetadata() {
-            if (!this.db) return
+            if (process.server || !this.db) return
             await this.db.put('metadata', {
                 lastFetchTimestamp: Date.now(),
                 etag: this.cachedEtag
@@ -247,53 +250,62 @@ export const useGithubStore = defineStore('github', {
 export interface ReleaseObj {
     id: string
     name: string
-    publishedAt: string
-    updatedAt: string
+    tagName: string
     url: string
-    isDraft: boolean
+    publishedAt: string
+    descriptionHTML: string
     isPrerelease: boolean
-    descriptionHTML?: string
+    isDraft: boolean
     repo: {
         name: string
-        description: string
         url: string
         stargazerCount: number
         owner: {
             login: string
-            avatarUrl: string
             url: string
-        }
-        primaryLanguage: {
-            id: string
-            name: string
-        }
-        languages: {
-            totalCount: number
-            edges: Array<{
-                node: {
-                id: string
-                name: string
-                }
-            }>
+            avatarUrl: string
         }
         licenseInfo: {
             spdxId: string
         } | null
+        primaryLanguage: {
+            id: string
+            name: string
+        } | null
+        languages: {
+            edges: Array<{
+                node: {
+                    id: string
+                    name: string
+                }
+            }>
+        }
     }
 }
 
 export const useGithub = () => {
     const store = useGithubStore()
+    const { loggedIn, session, fetch: fetchSession } = useUserSession()
     const startingDate = new Date()
     startingDate.setMonth(startingDate.getMonth() - 3)
 
-    const octokit = computed(() =>
-        store.token ? new Octokit({ 
-            auth: store.token,
+    const octokit = computed(() => {
+        if (!loggedIn.value || !session.value?.user?.accessToken) {
+            console.log('GitHub auth status:', {
+                loggedIn: loggedIn.value,
+                hasSession: !!session.value,
+                hasAccessToken: !!session.value?.user?.accessToken
+            })
+            return null
+        }
+        
+        console.log('Creating Octokit instance with access token:', session.value.user.accessToken.substring(0, 8) + '...')
+        return new Octokit({ 
+            auth: session.value.user.accessToken,
             retry: { enabled: true, retries: 3 },
             throttle: { enabled: true, minimumSecondsBetweenCalls: 1 }
-        }) : null
-    )
+        })
+    })
 
     const recentReleasesQuery = `
     query($cursor: String, $pageSize: Int!) {
@@ -308,23 +320,23 @@ export const useGithub = () => {
             node {
               name
               url
-            description
+              description
               languages(first: 10) {
                 totalCount
                 edges {
                   node {
+                    id
+                    name
+                  }
+                }
+              }
+              licenseInfo {
+                spdxId
+              }
+              primaryLanguage {
                 id
                 name
-                  }
               }
-            }
-            licenseInfo {
-              spdxId
-            }
-            primaryLanguage {
-              id
-              name
-            }
               owner {
                 login
                 avatarUrl
@@ -339,13 +351,14 @@ export const useGithub = () => {
                 }
                 edges {
                   node {
-                id
-                isDraft
-                isPrerelease
-                name
-                publishedAt
-                updatedAt
-                url
+                    id
+                    isDraft
+                    isPrerelease
+                    name
+                    tagName
+                    publishedAt
+                    updatedAt
+                    url
                     descriptionHTML
                   }
                 }
@@ -388,7 +401,8 @@ export const useGithub = () => {
             throw new Error('Invalid response format: edges is not an array')
         }
 
-        const existingIds = new Set(store.releases.map(r => r.id))
+        // Create a Map of existing releases for faster lookup
+        const existingReleases = new Map(store.releases.map(r => [r.id, r]))
         let newReleasesCount = 0
 
         for (const edge of edges) {
@@ -400,17 +414,17 @@ export const useGithub = () => {
                 .filter(release => 
                     release && 
                     new Date(release.publishedAt) >= startingDate &&
-                    !existingIds.has(release.id)
+                    !existingReleases.has(release.id)
                 )
                 .map(release => ({
                     id: release.id,
                     name: release.name,
+                    tagName: release.tagName,
                     publishedAt: release.publishedAt,
-                    updatedAt: release.updatedAt,
                     url: release.url,
                     isDraft: release.isDraft,
                     isPrerelease: release.isPrerelease,
-                    descriptionHTML: release.descriptionHTML || undefined,
+                    descriptionHTML: release.descriptionHTML || '',
                     repo: {
                         name: repoNode.name,
                         url: repoNode.url,
@@ -433,7 +447,7 @@ export const useGithub = () => {
                 if (!release.descriptionHTML && store.db) {
                     const cachedDescription = await store.db.get(
                         'descriptions',
-                        `${release.id}-${release.updatedAt}`
+                        `${release.id}-${release.publishedAt}`
                     )
                     if (cachedDescription) {
                         release.descriptionHTML = cachedDescription
@@ -445,7 +459,7 @@ export const useGithub = () => {
                     await store.db.put(
                         'descriptions',
                         release.descriptionHTML,
-                        `${release.id}-${release.updatedAt}`
+                        `${release.id}-${release.publishedAt}`
                     )
                 }
 
@@ -457,17 +471,19 @@ export const useGithub = () => {
                     })
                 }
 
-                existingIds.add(release.id)
+                // Add to existing releases map
+                existingReleases.set(release.id, release)
             }
-
-            store.releases = [...store.releases, ...newReleases].sort((a, b) =>
-                new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime()
-            )
 
             newReleasesCount += newReleases.length
             store.reposProcessed++
             store.progress = store.reposProcessed / totalCount
         }
+
+        // Update the store's releases with all releases from the map
+        store.releases = Array.from(existingReleases.values()).sort((a, b) =>
+            new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime()
+        )
 
         // Update metadata after successful fetch
         await store.updateMetadata()
@@ -496,34 +512,36 @@ export const useGithub = () => {
 
     const fetchReleases = async (cursor: string | null = null) => {
         if (!octokit.value) {
-            store.setError(new Error('GitHub token not set'))
+            console.error('GitHub auth failed:', {
+                loggedIn: loggedIn.value,
+                hasSession: !!session.value,
+                hasAccessToken: !!session.value?.user?.accessToken
+            })
+            store.setError(new Error('Not authenticated'))
             return
         }
 
         try {
             if (!cursor) {
-                // Only show loading state for initial fetch
                 store.loading = true
                 store.progress = 0
                 store.error = null
                 store.reposProcessed = 0
                 store.retries = 0
                 
-                // Initialize DB if needed
                 if (!store.db) {
                     await store.initDB()
                 }
 
-                // Try to load cached data first
                 const hasCachedData = await store.loadCachedReleases()
                 
-                // If we have cached data and it's not stale, skip the fetch
                 if (hasCachedData && !store.shouldRefetch()) {
                     store.loading = false
                     return
                 }
             }
 
+            console.log('Fetching GitHub releases with cursor:', cursor)
             const response = await fetchWithRetry(async () => 
                 octokit.value!.graphql<GraphQLResponse>(recentReleasesQuery, { 
                     cursor,
@@ -538,26 +556,34 @@ export const useGithub = () => {
             await processResponse(response, cursor)
 
         } catch (error: any) {
-            if (error.message?.includes('NetworkError')) {
-                store.setError(new Error('Network error. Please check your internet connection and try again.'))
-            } else if (error.message?.includes('Bad credentials')) {
-                store.setError(new Error('Invalid GitHub token. Please check your token and try again.'))
+            if (error.message?.includes('Bad credentials')) {
+                console.error('GitHub auth error - bad credentials:', error)
+                // Session might be invalid, try to refresh it
+                await fetchSession()
+                if (!loggedIn.value) {
+                    store.setError(new Error('Session expired. Please login again.'))
+                }
             } else {
+                console.error('Error fetching GitHub releases:', error)
                 store.setError(error)
             }
-            console.error('Error fetching releases:', error)
             store.loading = false
         }
     }
+
+    // Watch for session changes
+    watch(loggedIn, async (isLoggedIn) => {
+        console.log('GitHub login status changed:', isLoggedIn)
+        if (!isLoggedIn) {
+            store.clearData()
+        }
+    })
 
     return {
         releases: computed(() => store.releases),
         loading: computed(() => store.loading),
         progress: computed(() => store.progress),
         error: computed(() => store.error),
-        token: computed(() => store.token),
-        fetchReleases,
-        setToken: store.setToken,
-        clearToken: store.clearToken
+        fetchReleases
     }
 }

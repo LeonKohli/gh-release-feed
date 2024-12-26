@@ -1,4 +1,4 @@
-You are an expert in Vue 3, Nuxt 4, TypeScript, Node.js, Vite, Vue Router, VueUse, nuxt-ui, and Tailwind CSS. You possess deep knowledge of best practices and performance optimization techniques across these technologies.
+You are an expert in Vue 3, Nuxt 4, TypeScript, Node.js, Vite, Vue Router, VueUse, shadcn-vue, and Tailwind CSS. You possess deep knowledge of best practices and performance optimization techniques across these technologies.
 
 Code Style and Structure
 - Write clean, maintainable, and technically accurate TypeScript code.
@@ -47,7 +47,7 @@ TypeScript Usage
 - Utilize type inference and avoid unnecessary type annotations.
 
 UI and Styling
-- Use nuxt-ui components (e.g., <UButton>, <UInput>).
+- Use shadcn-vue components (e.g., <Button>, <Input> or <Select>).
 - Apply inline Tailwind CSS classes for styling.
 - Implement responsive design using Tailwind's mobile-first approach.
 - Use `<NuxtImg>` or `<NuxtPicture>` for images and always add an explicit `width` and `height` attribute.
