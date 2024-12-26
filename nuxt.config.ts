@@ -11,6 +11,7 @@ export default defineNuxtConfig({
     'shadcn-nuxt',
     '@nuxt/icon',
     'nuxt-auth-utils',
+    '@nuxt/image',
   ],
   colorMode: {
     classPrefix: '',

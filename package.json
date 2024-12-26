@@ -10,6 +10,7 @@
     "postinstall": "nuxt prepare"
   },
   "dependencies": {
+    "@nuxt/image": "1.8.1",
     "@nuxtjs/tailwindcss": "6.12.2",
     "@octokit/core": "^6.1.2",
     "@pinia/nuxt": "0.9.0",

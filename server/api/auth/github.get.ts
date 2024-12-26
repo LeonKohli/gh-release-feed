@@ -18,12 +18,14 @@ export default defineOAuthGitHubEventHandler({
         userId: id,
         email: user.email,
         name: user.name || user.login,
+        avatarUrl: user.avatar_url,
         accessToken: tokens.access_token
       },
       loggedInAt: new Date()
     })
 
     const session = await getUserSession(event)
+    console.log('GitHub OAuth success - session:', session)
     return sendRedirect(event, '/')
   },
   onError(event, error) {

@@ -5,22 +5,24 @@
       <!-- Header -->
       <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div class="flex items-center gap-3">
-          <Avatar class="w-8 h-8 transition-transform sm:w-10 sm:h-10 shrink-0 group-hover/card:scale-105">
-            <AvatarImage 
+          <Avatar class="w-8 h-8 sm:w-10 sm:h-10 shrink-0 ">
+            <NuxtImg 
               :src="release.repo.owner.avatarUrl" 
               :alt="release.repo.owner.login" 
               loading="lazy"
-              class="object-cover w-full h-full"
+              class="object-cover w-full h-full rounded-full aspect-square"
+              width="40"
+              height="40"
             />
-            <AvatarFallback>{{ release.repo.owner.login.slice(0, 2).toUpperCase() }}</AvatarFallback>
+            <AvatarFallback class="hidden">{{ release.repo.owner.login.slice(0, 2).toUpperCase() }}</AvatarFallback>
           </Avatar>
           <div>
             <div class="flex flex-wrap items-center gap-2">
-              <NuxtLink :to="release.repo.owner.url" target="_blank" class="text-foreground hover:text-foreground/90 hover:underline">
+              <NuxtLink :to="release.repo.owner.url" target="_blank" rel="noopener noreferrer" class="text-foreground hover:text-foreground/90 hover:underline">
                 {{ release.repo.owner.login }}
               </NuxtLink>
               <span class="text-muted-foreground">/</span>
-              <NuxtLink :to="release.repo.url" target="_blank" class="font-medium text-foreground hover:text-foreground/90 hover:underline">
+              <NuxtLink :to="release.repo.url" target="_blank" rel="noopener noreferrer" class="font-medium text-foreground hover:text-foreground/90 hover:underline">
                 {{ release.repo.name }}
               </NuxtLink>
             </div>
@@ -36,7 +38,7 @@
                 class="flex items-center gap-1 transition-colors hover:text-foreground cursor-help" 
                 :title="`${exactStars} stars`"
               >
-                <StarIcon class="w-4 h-4 text-yellow-500" />
+                <Icon name="lucide:star" class="w-4 h-4 text-yellow-500" />
                 {{ formattedStars }}
               </span>
               <span class="text-border">•</span>
@@ -44,7 +46,7 @@
                 class="flex items-center gap-1 transition-colors hover:text-foreground cursor-help"
                 :title="`Tag: ${release.tagName}`"
               >
-                <TagIcon class="w-4 h-4" />
+                <Icon name="lucide:tag" class="w-4 h-4" />
                 {{ release.tagName }}
               </span>
             </div>
@@ -58,7 +60,7 @@
             class="gap-1 transition-all whitespace-nowrap group-hover/card:shadow-sm"
             :title="licenseText === 'No License' ? 'This repository has no license' : `License: ${licenseText}`"
           >
-            <FileTextIcon class="w-4 h-4" />
+            <Icon name="lucide:file-text" class="w-4 h-4" />
             {{ licenseText }}
           </Badge>
         </div>
@@ -68,11 +70,12 @@
       <div class="flex flex-col gap-2">
         <NuxtLink 
           :to="release.url" 
-          target="_blank" 
+          target="_blank"
+          rel="noopener noreferrer"
           class="text-lg font-semibold sm:text-xl hover:text-primary hover:underline group/title"
         >
           <span class="flex items-center gap-2">
-            <TagIcon class="w-5 h-5 transition-colors text-muted-foreground group-hover/title:text-primary" />
+            <Icon name="lucide:tag" class="w-5 h-5 transition-colors text-muted-foreground group-hover/title:text-primary" />
             {{ release.name }}
           </span>
         </NuxtLink>
@@ -140,13 +143,13 @@
           v-if="hasExpandableContent"
           variant="ghost" 
           size="sm"
-          class="shrink-0 "
+          class="shrink-0"
           @click="isContentExpanded = !isContentExpanded"
         >
           <span class="flex items-center gap-1">
             {{ isContentExpanded ? 'Show less' : 'Show more' }}
-            <ChevronDownIcon v-if="!isContentExpanded" class="w-4 h-4" />
-            <ChevronUpIcon v-else class="w-4 h-4" />
+            <Icon v-if="!isContentExpanded" name="lucide:chevron-down" class="w-4 h-4" />
+            <Icon v-else name="lucide:chevron-up" class="w-4 h-4" />
           </span>
         </Button>
       </div>
@@ -157,7 +160,6 @@
 <script setup lang="ts">
 import type { ReleaseObj } from '~/composables/useGithub'
 import { intlFormatDistance, format } from 'date-fns'
-import { StarIcon, FileTextIcon, ChevronDownIcon, ChevronUpIcon, GitBranchIcon, TagIcon } from 'lucide-vue-next'
 
 interface Language {
   id: string

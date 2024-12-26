@@ -3,21 +3,54 @@
   <div class="min-h-screen bg-background">
     <div class="container px-4 sm:px-6">
       <!-- Header -->
-      <header class="py-4 sm:py-8 sticky top-0 bg-background z-10">
-        <div class="flex flex-col sm:flex-row sm:items-center gap-4">
-          <h1 class="text-xl sm:text-2xl font-bold">GitHub Release Feed</h1>
-          <AuthState v-slot="{ loggedIn, clear }">
-            <Button v-if="loggedIn" variant="destructive" @click="handleLogout" class="sm:ml-auto">
-              <LogOutIcon class="h-4 w-4 mr-2" />
-              Logout
-            </Button>
-            <Button v-else @click="navigateTo('/login')" class="sm:ml-auto">
-              <LogInIcon class="h-4 w-4 mr-2" />
-              Login with GitHub
-            </Button>
-          </AuthState>
+      <header class="sticky top-0 z-10 py-4 sm:py-6 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+        <div class="flex flex-col gap-4">
+          <!-- Top Bar -->
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-3">
+              <Icon name="lucide:rss" class="w-6 h-6 text-primary" />
+              <h1 class="text-xl font-bold sm:text-2xl">Release Feed</h1>
+            </div>
+
+            <AuthState v-slot="{ loggedIn, clear, session }">
+              <div v-if="loggedIn" class="flex items-center gap-3">
+                <DropdownMenu>
+                  <DropdownMenuTrigger class="flex items-center gap-2 outline-none">
+                    <Avatar class="w-8 h-8 transition-transform hover:scale-105">
+                      <AvatarImage
+                        v-if="session?.user?.avatarUrl"
+                        :src="session.user.avatarUrl"
+                        :alt="session.user.name || 'User avatar'"
+                      />
+                      <AvatarFallback v-else>
+                        {{ (session?.user?.name || 'User')[0]?.toUpperCase() }}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div class="hidden text-sm sm:block">
+                      <span class="font-medium">{{ session?.user?.name }}</span>
+                    </div>
+                    <Icon name="lucide:chevron-down" class="w-4 h-4 text-muted-foreground" />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" class="w-48">
+                    <DropdownMenuLabel>Account</DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem @click="handleLogout">
+                      <LogOutIcon class="w-4 h-4 mr-2" />
+                      <span>Logout</span>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+              <Button v-else @click="navigateTo('/login')" class="gap-2">
+                <LogInIcon class="w-4 h-4" />
+                Login with GitHub
+              </Button>
+            </AuthState>
+          </div>
+
+          <!-- Progress Bar -->
+          <Progress v-if="loading" :value="progress * 100" class="h-1" />
         </div>
-        <Progress v-if="loading" :value="progress * 100" class="mt-4" />
       </header>
 
       <!-- Main Content -->
@@ -39,7 +72,7 @@
         <div v-else>
           <div v-if="error" class="mb-4">
             <Alert variant="destructive">
-              <AlertCircleIcon class="h-4 w-4" />
+              <AlertCircleIcon class="w-4 h-4" />
               <AlertTitle>Error</AlertTitle>
               <AlertDescription>{{ error }}</AlertDescription>
             </Alert>
@@ -51,15 +84,15 @@
                 <ReleaseCard v-for="release in visibleReleases" :key="release.id" :release="release" />
               </TransitionGroup>
             </template>
-            <div v-else-if="!loading" class="text-center py-8 text-muted-foreground">
+            <div v-else-if="!loading" class="py-8 text-center text-muted-foreground">
               No releases found in the last 3 months
             </div>
           </div>
 
-          <div v-if="hasMoreReleases" ref="loadMoreTrigger" class="py-6 sm:py-8 text-center">
+          <div v-if="hasMoreReleases" ref="loadMoreTrigger" class="py-6 text-center sm:py-8">
             <Button v-if="!loading" @click="loadMore" class="w-full sm:w-auto">Load More</Button>
             <div v-else class="flex justify-center">
-              <div class="animate-spin rounded-full h-8 w-8 border-4 border-primary border-t-transparent"></div>
+              <div class="w-8 h-8 border-4 rounded-full animate-spin border-primary border-t-transparent"></div>
             </div>
           </div>
         </div>
