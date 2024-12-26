@@ -1,7 +1,7 @@
 export default defineOAuthGitHubEventHandler({
   config: {
     emailRequired: true,
-    scope: ['read:user', 'user:email', 'read:org', 'repo']
+    scope: ['read:user', 'user:email', 'read:org'] // Only using read scopes
   },
   async onSuccess(event, { user, tokens }) {
     if (!user?.email) {
