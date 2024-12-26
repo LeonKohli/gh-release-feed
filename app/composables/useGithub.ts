@@ -160,7 +160,6 @@ export const useGithubStore = defineStore('github', {
         async initDB() {
             // Only initialize IndexedDB in the browser
             if (process.server) {
-                console.log('Skipping IndexedDB initialization on server')
                 return
             }
 
@@ -291,15 +290,10 @@ export const useGithub = () => {
 
     const octokit = computed(() => {
         if (!loggedIn.value || !session.value?.user?.accessToken) {
-            console.log('GitHub auth status:', {
-                loggedIn: loggedIn.value,
-                hasSession: !!session.value,
-                hasAccessToken: !!session.value?.user?.accessToken
-            })
+
             return null
         }
         
-        console.log('Creating Octokit instance with access token:', session.value.user.accessToken.substring(0, 8) + '...')
         return new Octokit({ 
             auth: session.value.user.accessToken,
             retry: { enabled: true, retries: 3 },
@@ -383,7 +377,6 @@ export const useGithub = () => {
         } catch (error: any) {
             if (retries === 0) throw error
             store.retries++
-            console.log(`Retrying Request - Retry #${store.retries}`)
             await new Promise(resolve => setTimeout(resolve, delay))
             return fetchWithRetry(fn, retries - 1, delay * 2)
         }
@@ -541,7 +534,6 @@ export const useGithub = () => {
                 }
             }
 
-            console.log('Fetching GitHub releases with cursor:', cursor)
             const response = await fetchWithRetry(async () => 
                 octokit.value!.graphql<GraphQLResponse>(recentReleasesQuery, { 
                     cursor,
@@ -573,7 +565,6 @@ export const useGithub = () => {
 
     // Watch for session changes
     watch(loggedIn, async (isLoggedIn) => {
-        console.log('GitHub login status changed:', isLoggedIn)
         if (!isLoggedIn) {
             store.clearData()
         }

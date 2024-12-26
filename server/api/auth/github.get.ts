@@ -4,9 +4,6 @@ export default defineOAuthGitHubEventHandler({
     scope: ['read:user', 'user:email', 'read:org', 'repo']
   },
   async onSuccess(event, { user, tokens }) {
-    console.log('GitHub OAuth success - user data:', user)
-    console.log('GitHub OAuth success - tokens:', tokens)
-
     if (!user?.email) {
       throw createError({
         statusCode: 400,
@@ -27,7 +24,6 @@ export default defineOAuthGitHubEventHandler({
     })
 
     const session = await getUserSession(event)
-    console.log('GitHub OAuth success - session:', session)
     return sendRedirect(event, '/')
   },
   onError(event, error) {
