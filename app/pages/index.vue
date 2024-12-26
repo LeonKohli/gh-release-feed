@@ -14,6 +14,74 @@
 
             <AuthState v-slot="{ loggedIn, clear, session }">
               <div v-if="loggedIn" class="flex items-center gap-3">
+                <ClientOnly>
+                  <template #default>
+                    <DropdownMenu v-if="loading">
+                      <DropdownMenuTrigger class="relative">
+                        <Button 
+                          variant="ghost" 
+                          size="icon"
+                          :disabled="loading"
+                          class="relative"
+                          :title="loading ? 'Loading details...' : 'Refresh releases'"
+                        >
+                          <Icon 
+                            name="lucide:refresh-cw" 
+                            class="w-5 h-5" 
+                            :class="{ 'animate-spin': loading }" 
+                          />
+                          <span class="absolute -top-1 -right-1">
+                            <span class="relative flex w-2 h-2">
+                              <span class="absolute inline-flex w-full h-full rounded-full opacity-75 animate-ping bg-primary"></span>
+                              <span class="relative inline-flex w-2 h-2 rounded-full bg-primary"></span>
+                            </span>
+                          </span>
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" class="w-64">
+                        <DropdownMenuLabel>Loading Status</DropdownMenuLabel>
+                        <DropdownMenuSeparator />
+                        <div class="px-2 py-1.5 text-sm">
+                          <div class="space-y-2">
+                            <div class="flex items-center justify-between gap-4">
+                              <span class="text-muted-foreground">Repositories Found:</span>
+                              <span class="font-medium">{{ reposProcessed }}</span>
+                            </div>
+                            <div class="flex items-center justify-between gap-4">
+                              <span class="text-muted-foreground">API Calls Left:</span>
+                              <span class="font-medium">{{ rateLimitRemaining }}</span>
+                            </div>
+                            <div v-if="retries > 0" class="flex items-center justify-between gap-4 text-yellow-500">
+                              <span>Retries:</span>
+                              <span class="font-medium">{{ retries }}</span>
+                            </div>
+                            <div v-if="rateLimitResetAt" class="flex items-center justify-between gap-4">
+                              <span class="text-muted-foreground">Rate Limit Resets:</span>
+                              <span class="font-medium">{{ new Date(rateLimitResetAt).toLocaleTimeString() }}</span>
+                            </div>
+                            <div class="pt-1 text-xs text-muted-foreground">
+                              Loading releases from starred repositories...
+                            </div>
+                          </div>
+                        </div>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                    <Button 
+                      v-else
+                      variant="ghost" 
+                      size="icon"
+                      class="relative"
+                      @click="handleRefresh"
+                      title="Refresh releases"
+                    >
+                      <Icon name="lucide:refresh-cw" class="w-5 h-5" />
+                    </Button>
+                  </template>
+                  <template #fallback>
+                    <div class="w-9 h-9"></div>
+                  </template>
+                </ClientOnly>
+
                 <DropdownMenu>
                   <DropdownMenuTrigger class="flex items-center gap-2 outline-none">
                     <Avatar class="w-8 h-8 transition-transform hover:scale-105">
@@ -47,9 +115,6 @@
               </Button>
             </AuthState>
           </div>
-
-          <!-- Progress Bar -->
-          <Progress v-if="loading" :value="progress * 100" class="h-1" />
         </div>
       </header>
 
@@ -78,13 +143,32 @@
             </Alert>
           </div>
 
-          <div class="grid gap-4 sm:gap-6">
+          <!-- Loading Skeleton -->
+          <div v-if="loading && !visibleReleases.length" class="grid gap-4 sm:gap-6">
+            <Card v-for="n in 3" :key="n" class="p-3 sm:p-6">
+              <div class="space-y-4 animate-pulse">
+                <div class="flex items-center gap-3">
+                  <div class="w-8 h-8 rounded-full bg-muted"></div>
+                  <div class="flex-1 space-y-2">
+                    <div class="w-1/4 h-4 rounded bg-muted"></div>
+                    <div class="w-1/3 h-3 rounded bg-muted"></div>
+                  </div>
+                </div>
+                <div class="space-y-2">
+                  <div class="w-3/4 h-5 rounded bg-muted"></div>
+                  <div class="w-1/2 h-4 rounded bg-muted"></div>
+                </div>
+              </div>
+            </Card>
+          </div>
+
+          <div v-else class="grid gap-4 sm:gap-6">
             <template v-if="visibleReleases.length > 0">
-              <TransitionGroup name="list" tag="div" class="grid gap-4 sm:gap-6">
+              <div class="grid gap-4 sm:gap-6">
                 <ReleaseCard v-for="release in visibleReleases" :key="release.id" :release="release" />
-              </TransitionGroup>
+              </div>
             </template>
-            <div v-else-if="!loading" class="py-8 text-center text-muted-foreground">
+            <div v-else class="py-8 text-center text-muted-foreground">
               No releases found in the last 3 months
             </div>
           </div>
@@ -110,7 +194,12 @@ const {
   loading,
   progress,
   error,
-  fetchReleases
+  reposProcessed,
+  rateLimitRemaining,
+  rateLimitResetAt,
+  retries,
+  fetchReleases,
+  clearCache
 } = useGithub()
 
 const page = ref(1)
@@ -128,6 +217,18 @@ const loadMoreTrigger = ref<HTMLElement | null>(null)
 
 const loadMore = () => {
   page.value++
+}
+
+// Force refresh releases
+const handleRefresh = async () => {
+  if (loading.value) return
+  try {
+    page.value = 1 // Reset to first page
+    await clearCache() // Clear the cache first
+    await fetchReleases() // Then fetch fresh data
+  } catch (error) {
+    console.error('Error refreshing releases:', error)
+  }
 }
 
 // Use intersection observer for infinite scroll
@@ -181,19 +282,5 @@ useHead({
 </script>
 
 <style>
-.list-move,
-.list-enter-active,
-.list-leave-active {
-  transition: all 0.5s ease;
-}
-
-.list-enter-from,
-.list-leave-to {
-  opacity: 0;
-  transform: translateX(30px);
-}
-
-.list-leave-active {
-  position: absolute;
-}
+/* Removed transition styles */
 </style>

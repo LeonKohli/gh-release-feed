@@ -134,6 +134,7 @@ export const useGithubStore = defineStore('github', {
         pageSize: 20,
         db: null as IDBPDatabase<GithubReleasesDBSchema> | null,
         reposProcessed: 0,
+        totalReposWithReleases: 0,
         retries: 0,
         rateLimitCost: 0,
         rateLimitRemaining: 5000,
@@ -154,6 +155,7 @@ export const useGithubStore = defineStore('github', {
             this.error = null
             this.lastFetchTimestamp = null
             this.reposProcessed = 0
+            this.totalReposWithReleases = 0
             this.retries = 0
         },
 
@@ -242,6 +244,36 @@ export const useGithubStore = defineStore('github', {
             this.rateLimitCost += rateLimit.cost
             this.rateLimitRemaining = rateLimit.remaining
             this.rateLimitResetAt = rateLimit.resetAt
+        },
+
+        async clearCache() {
+            if (!this.db) {
+                await this.initDB()
+            }
+            if (!this.db) return
+
+            try {
+                // Clear all stores
+                await this.db.clear('descriptions')
+                await this.db.clear('releases')
+                await this.db.clear('metadata')
+                
+                // Reset store state
+                this.lastFetchTimestamp = null
+                this.cachedEtag = null
+                this.releases = []
+            } catch (error) {
+                console.error('Error clearing cache:', error)
+            }
+        },
+
+        updateProgress() {
+            // Calculate progress based on repositories with releases
+            if (this.totalReposWithReleases === 0) {
+                this.progress = 0
+            } else {
+                this.progress = Math.min(this.reposProcessed / this.totalReposWithReleases, 1)
+            }
         }
     }
 })
@@ -398,6 +430,26 @@ export const useGithub = () => {
         const existingReleases = new Map(store.releases.map(r => [r.id, r]))
         let newReleasesCount = 0
 
+        // Count repositories with releases in this batch
+        const reposWithReleases = edges.filter(edge => 
+            edge.node?.releases?.edges?.some(release => 
+                release.node && 
+                new Date(release.node.publishedAt) >= startingDate
+            )
+        ).length
+
+        // Update total repos with releases
+        store.totalReposWithReleases += reposWithReleases
+
+        // Update progress calculation
+        const updateProgress = () => {
+            if (store.totalReposWithReleases === 0) {
+                store.progress = 0
+            } else {
+                store.progress = Math.min(store.reposProcessed / store.totalReposWithReleases, 1)
+            }
+        }
+
         for (const edge of edges) {
             const repoNode = edge.node
             if (!repoNode?.releases?.edges) continue
@@ -470,7 +522,7 @@ export const useGithub = () => {
 
             newReleasesCount += newReleases.length
             store.reposProcessed++
-            store.progress = store.reposProcessed / totalCount
+            updateProgress()
         }
 
         // Update the store's releases with all releases from the map
@@ -575,6 +627,11 @@ export const useGithub = () => {
         loading: computed(() => store.loading),
         progress: computed(() => store.progress),
         error: computed(() => store.error),
-        fetchReleases
+        reposProcessed: computed(() => store.reposProcessed),
+        rateLimitRemaining: computed(() => store.rateLimitRemaining),
+        rateLimitResetAt: computed(() => store.rateLimitResetAt),
+        retries: computed(() => store.retries),
+        fetchReleases,
+        clearCache: async () => await store.clearCache()
     }
 }
