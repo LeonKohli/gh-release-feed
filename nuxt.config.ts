@@ -13,6 +13,7 @@ export default defineNuxtConfig({
     'nuxt-auth-utils',
     '@nuxt/image',
     '@vueuse/nuxt',
+    '@nuxtjs/color-mode',
   ],
   colorMode: {
     classPrefix: '',
