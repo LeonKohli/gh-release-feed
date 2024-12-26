@@ -144,7 +144,7 @@
           </div>
 
           <!-- Loading Skeleton -->
-          <div v-if="loading && !visibleReleases.length" class="grid gap-4 sm:gap-6">
+          <div v-if="loading && (!visibleReleases.length || reposProcessed === 0)" class="grid gap-4 sm:gap-6">
             <Card v-for="n in 3" :key="n" class="p-3 sm:p-6">
               <div class="space-y-4 animate-pulse">
                 <div class="flex items-center gap-3">
@@ -168,7 +168,7 @@
                 <ReleaseCard v-for="release in visibleReleases" :key="release.id" :release="release" />
               </div>
             </template>
-            <div v-else class="py-8 text-center text-muted-foreground">
+            <div v-else-if="!loading" class="py-8 text-center text-muted-foreground">
               No releases found in the last 3 months
             </div>
           </div>

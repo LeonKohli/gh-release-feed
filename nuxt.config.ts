@@ -12,6 +12,7 @@ export default defineNuxtConfig({
     '@nuxt/icon',
     'nuxt-auth-utils',
     '@nuxt/image',
+    '@vueuse/nuxt',
   ],
   colorMode: {
     classPrefix: '',

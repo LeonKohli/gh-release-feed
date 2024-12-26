@@ -572,17 +572,24 @@ export const useGithub = () => {
                 store.progress = 0
                 store.error = null
                 store.reposProcessed = 0
+                store.totalReposWithReleases = 0
                 store.retries = 0
                 
                 if (!store.db) {
                     await store.initDB()
                 }
 
+                // Only show cached releases if we're not forcing a refresh
                 const hasCachedData = await store.loadCachedReleases()
                 
                 if (hasCachedData && !store.shouldRefetch()) {
                     store.loading = false
                     return
+                }
+
+                // Clear releases when starting a fresh fetch
+                if (!hasCachedData || store.shouldRefetch()) {
+                    store.releases = []
                 }
             }
 
