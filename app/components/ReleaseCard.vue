@@ -1,101 +1,181 @@
 <!-- components/releases/ReleaseCard.vue -->
 <template>
-  <UCard class="release-card" :ui="{ body: { padding: 'p-6' } }">
-    <div class="flex flex-col gap-4">
+  <Card class="p-3 transition-all duration-200 sm:p-6 release-card group/card hover:shadow-lg">
+    <div class="flex flex-col gap-3 sm:gap-4">
       <!-- Header -->
-      <div class="flex justify-between items-start">
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div class="flex items-center gap-3">
-          <UAvatar 
-            :src="release.repo.owner.avatarUrl" 
-            :alt="release.repo.owner.login" 
-            loading="lazy"
-            width="40"
-            height="40"
-            class="shrink-0"
-          />
+          <Avatar class="w-8 h-8 transition-transform sm:w-10 sm:h-10 shrink-0 group-hover/card:scale-105">
+            <AvatarImage 
+              :src="release.repo.owner.avatarUrl" 
+              :alt="release.repo.owner.login" 
+              loading="lazy"
+              class="object-cover w-full h-full"
+            />
+            <AvatarFallback>{{ release.repo.owner.login.slice(0, 2).toUpperCase() }}</AvatarFallback>
+          </Avatar>
           <div>
-            <div class="flex items-center gap-2">
-              <NuxtLink :to="release.repo.owner.url" target="_blank" class="text-gray-700 hover:text-gray-900 hover:underline">
+            <div class="flex flex-wrap items-center gap-2">
+              <NuxtLink :to="release.repo.owner.url" target="_blank" class="text-foreground hover:text-foreground/90 hover:underline">
                 {{ release.repo.owner.login }}
               </NuxtLink>
-              <span class="text-gray-500">/</span>
-              <NuxtLink :to="release.repo.url" target="_blank" class="text-gray-700 hover:text-gray-900 font-medium hover:underline">
+              <span class="text-muted-foreground">/</span>
+              <NuxtLink :to="release.repo.url" target="_blank" class="font-medium text-foreground hover:text-foreground/90 hover:underline">
                 {{ release.repo.name }}
               </NuxtLink>
             </div>
-            <div class="text-sm text-gray-500 flex items-center gap-2">
-              <span>{{ formattedDate }}</span>
-              <span class="text-gray-300">•</span>
-              <span class="flex items-center gap-1">
-                <div i="carbon-star-filled" class="text-yellow-500" />
+            <div class="flex items-center gap-2 text-sm text-muted-foreground">
+              <span 
+                class="transition-colors hover:text-foreground cursor-help" 
+                :title="exactDate"
+              >
+                {{ formattedDate }}
+              </span>
+              <span class="text-border">•</span>
+              <span 
+                class="flex items-center gap-1 transition-colors hover:text-foreground cursor-help" 
+                :title="`${exactStars} stars`"
+              >
+                <StarIcon class="w-4 h-4 text-yellow-500" />
                 {{ formattedStars }}
+              </span>
+              <span class="text-border">•</span>
+              <span 
+                class="flex items-center gap-1 transition-colors hover:text-foreground cursor-help"
+                :title="`Tag: ${release.tagName}`"
+              >
+                <TagIcon class="w-4 h-4" />
+                {{ release.tagName }}
               </span>
             </div>
           </div>
         </div>
 
         <div class="flex gap-2">
-          <UBadge 
+          <Badge 
             v-memo="[release.repo.licenseInfo]" 
-            :color="licenseColor"
-            variant="subtle"
-            class="whitespace-nowrap"
+            :variant="licenseColor === 'green' ? 'default' : 'destructive'"
+            class="gap-1 transition-all whitespace-nowrap group-hover/card:shadow-sm"
+            :title="licenseText === 'No License' ? 'This repository has no license' : `License: ${licenseText}`"
           >
-            <template #icon>
-              <div i="carbon-license" />
-            </template>
+            <FileTextIcon class="w-4 h-4" />
             {{ licenseText }}
-          </UBadge>
+          </Badge>
         </div>
       </div>
 
       <!-- Release Title -->
       <div class="flex flex-col gap-2">
-        <NuxtLink :to="release.url" target="_blank" class="text-xl font-semibold hover:text-primary-600 hover:underline">
-          {{ release.name }}
+        <NuxtLink 
+          :to="release.url" 
+          target="_blank" 
+          class="text-lg font-semibold sm:text-xl hover:text-primary hover:underline group/title"
+        >
+          <span class="flex items-center gap-2">
+            <TagIcon class="w-5 h-5 transition-colors text-muted-foreground group-hover/title:text-primary" />
+            {{ release.name }}
+          </span>
         </NuxtLink>
 
-        <div v-if="release.isPrerelease || release.isDraft" class="flex gap-2">
-          <UBadge v-if="release.isPrerelease" color="orange" variant="subtle">Pre-release</UBadge>
-          <UBadge v-if="release.isDraft" color="gray" variant="subtle">Draft</UBadge>
+        <div v-if="release.isPrerelease || release.isDraft" class="flex flex-wrap gap-2">
+          <Badge 
+            v-if="release.isPrerelease" 
+            variant="secondary" 
+            class="text-orange-800 transition-all bg-orange-100 hover:bg-orange-100 group-hover/card:shadow-sm"
+            title="This is a pre-release version"
+          >
+            Pre-release
+          </Badge>
+          <Badge 
+            v-if="release.isDraft" 
+            variant="secondary" 
+            class="text-gray-800 transition-all bg-gray-100 hover:bg-gray-100 group-hover/card:shadow-sm"
+            title="This release is still in draft"
+          >
+            Draft
+          </Badge>
         </div>
       </div>
 
       <!-- Description -->
       <ClientOnly>
         <Suspense>
-          <div 
-            v-if="release.descriptionHTML" 
-            class="prose prose-sm max-h-[400px] overflow-y-auto w-full"
-            v-html="sanitizedDescription" 
-          />
+          <div class="relative">
+            <ReleaseContent 
+              v-if="release.descriptionHTML" 
+              :html="sanitizedDescription"
+              v-model:isExpanded="isContentExpanded"
+              @update:isExpanded="onContentExpandChange"
+            />
+          </div>
         </Suspense>
       </ClientOnly>
 
-      <!-- Languages -->
-      <div class="flex flex-wrap gap-2">
-        <UBadge 
-          v-for="lang in languages" 
-          :key="lang.id"
-          :color="lang.id === release.repo.primaryLanguage?.id ? 'primary' : 'gray'"
-          variant="subtle"
-          v-memo="[lang.id, lang.name, release.repo.primaryLanguage?.id]"
-          class="whitespace-nowrap"
+      <!-- Bottom Bar with Languages and Expand/Collapse -->
+      <div class="flex items-center justify-between gap-3 pt-2 border-t border-border/40">
+        <!-- Languages with truncation -->
+        <div class="flex flex-wrap gap-1.5 sm:gap-2 flex-1 min-w-0">
+          <Badge 
+            v-for="lang in visibleLanguages" 
+            :key="lang.id"
+            :variant="lang.id === release.repo.primaryLanguage?.id ? 'default' : 'secondary'"
+            v-memo="[lang.id, lang.name, release.repo.primaryLanguage?.id]"
+            class="text-xs transition-all whitespace-nowrap sm:text-sm group-hover/card:shadow-sm"
+            :title="lang.id === release.repo.primaryLanguage?.id ? 'Primary language' : undefined"
+          >
+            {{ lang.name }}
+          </Badge>
+          <Badge 
+            v-if="hiddenLanguagesCount"
+            variant="secondary"
+            class="text-xs transition-all whitespace-nowrap sm:text-sm group-hover/card:shadow-sm"
+            :title="`${hiddenLanguagesCount} more languages`"
+          >
+            +{{ hiddenLanguagesCount }} more
+          </Badge>
+        </div>
+
+        <!-- Expand/Collapse Button -->
+        <Button 
+          v-if="hasExpandableContent"
+          variant="ghost" 
+          size="sm"
+          class="shrink-0 "
+          @click="isContentExpanded = !isContentExpanded"
         >
-          {{ lang.name }}
-        </UBadge>
+          <span class="flex items-center gap-1">
+            {{ isContentExpanded ? 'Show less' : 'Show more' }}
+            <ChevronDownIcon v-if="!isContentExpanded" class="w-4 h-4" />
+            <ChevronUpIcon v-else class="w-4 h-4" />
+          </span>
+        </Button>
       </div>
     </div>
-  </UCard>
+  </Card>
 </template>
 
 <script setup lang="ts">
 import type { ReleaseObj } from '~/composables/useGithub'
-import { intlFormatDistance } from 'date-fns'
+import { intlFormatDistance, format } from 'date-fns'
+import { StarIcon, FileTextIcon, ChevronDownIcon, ChevronUpIcon, GitBranchIcon, TagIcon } from 'lucide-vue-next'
+
+interface Language {
+  id: string
+  name: string
+}
 
 const props = defineProps<{
   release: ReleaseObj
+  isExpanded?: boolean
+  hasExpandButton?: boolean
 }>()
+
+const emit = defineEmits<{
+  'toggle-expand': []
+}>()
+
+const isContentExpanded = ref(false)
+const hasExpandableContent = ref(false)
 
 // Memoize computed properties
 const formattedDate = computed(() => {
@@ -105,11 +185,19 @@ const formattedDate = computed(() => {
   )
 })
 
+const exactDate = computed(() => {
+  return format(new Date(props.release.publishedAt), 'PPPp')
+})
+
 const formattedStars = computed(() => {
   return new Intl.NumberFormat('en', {
     notation: 'compact',
     maximumSignificantDigits: 3
   }).format(props.release.repo.stargazerCount)
+})
+
+const exactStars = computed(() => {
+  return new Intl.NumberFormat('en').format(props.release.repo.stargazerCount)
 })
 
 const licenseText = computed(() => {
@@ -132,86 +220,42 @@ const sanitizedDescription = computed(() => {
 })
 
 // Extract languages for v-memo optimization
-const languages = computed(() => {
-  return props.release.repo.languages.edges.map(edge => edge.node)
+const languages = computed<Language[]>(() => {
+  const allLangs = props.release.repo.languages.edges.map(edge => edge.node)
+  // Move primary language to front if it exists
+  if (props.release.repo.primaryLanguage) {
+    const primaryIndex = allLangs.findIndex(lang => lang.id === props.release.repo.primaryLanguage?.id)
+    if (primaryIndex > 0 && props.release.repo.primaryLanguage) {
+      const [primary] = allLangs.splice(primaryIndex, 1)
+      if (primary) {
+        allLangs.unshift(primary)
+      }
+    }
+  }
+  return allLangs
 })
+
+// Truncate languages if they would stack (show max 3 on mobile, 5 on desktop)
+const maxVisibleLanguages = computed(() => typeof window !== 'undefined' ? (window.innerWidth < 640 ? 3 : 5) : 5)
+
+const visibleLanguages = computed(() => {
+  return languages.value.slice(0, maxVisibleLanguages.value)
+})
+
+const hiddenLanguagesCount = computed(() => {
+  const count = languages.value.length - maxVisibleLanguages.value
+  return count > 0 ? count : 0
+})
+
+// Add handler for content expand state
+function onContentExpandChange(expanded: boolean) {
+  hasExpandableContent.value = true
+  isContentExpanded.value = expanded
+}
 </script>
 
 <style>
 .release-card {
-  @apply transition-all duration-200;
-  contain: content; /* CSS containment for better performance */
-}
-
-.prose {
-  @apply max-w-none; /* Allow prose to take full width */
-}
-
-.prose :deep(pre) {
-  @apply bg-gray-100 p-4 rounded-lg overflow-x-auto my-4;
   contain: content;
-}
-
-.prose :deep(code) {
-  @apply bg-gray-100 px-1.5 py-0.5 rounded text-sm font-mono;
-}
-
-.prose :deep(p) {
-  @apply my-3;
-}
-
-.prose :deep(ul), .prose :deep(ol) {
-  @apply my-3 pl-6;
-}
-
-.prose :deep(li) {
-  @apply my-1;
-}
-
-.prose :deep(h1), .prose :deep(h2), .prose :deep(h3) {
-  @apply font-semibold my-4;
-}
-
-.prose :deep(h1) {
-  @apply text-2xl;
-}
-
-.prose :deep(h2) {
-  @apply text-xl;
-}
-
-.prose :deep(h3) {
-  @apply text-lg;
-}
-
-.prose :deep(a) {
-  @apply text-primary-600 hover:text-primary-700 hover:underline;
-}
-
-.prose :deep(img) {
-  @apply rounded-lg shadow-sm max-w-full h-auto my-4;
-  contain: size layout;
-  width: 100%;
-  aspect-ratio: 16/9;
-}
-
-.prose :deep(blockquote) {
-  @apply border-l-4 border-gray-200 pl-4 my-4 italic;
-}
-
-.prose :deep(hr) {
-  @apply my-6 border-gray-200;
-}
-
-.prose :deep(table) {
-  @apply w-full my-4 border-collapse;
-}
-
-.prose :deep(th), .prose :deep(td) {
-  @apply border border-gray-200 p-2;
-}
-
-.prose :deep(th) {
-  @apply bg-gray-50;
 }
 </style>

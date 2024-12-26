@@ -1,91 +1,85 @@
 <!-- pages/index.vue -->
 <template>
-  <div class="min-h-screen bg-gray-50">
-    <UContainer>
+  <div class="min-h-screen bg-background">
+    <div class="container px-4 sm:px-6">
       <!-- Header -->
-      <header class="py-8 sticky top-0 bg-gray-50 z-10">
-        <div class="flex justify-between items-center">
-          <h1 class="text-2xl font-bold">GitHub Release Feed</h1>
-          <div v-if="!token" class="flex gap-4 items-center">
-            <UInput v-model="inputToken" placeholder="GitHub Token" type="password" :ui="{
-              wrapper: 'w-96',
-              icon: {
-                name: 'i-carbon-password',
-                trailing: inputToken ? 'i-carbon-checkmark-filled' : undefined
-              }
-            }" />
-            <UButton icon="i-carbon-login" label="Login" :loading="loading" :disabled="!inputToken" @click="login" />
-          </div>
-          <div v-else>
-            <UButton color="red" variant="soft" icon="i-carbon-logout" label="Logout" @click="logout" />
-          </div>
+      <header class="py-4 sm:py-8 sticky top-0 bg-background z-10">
+        <div class="flex flex-col sm:flex-row sm:items-center gap-4">
+          <h1 class="text-xl sm:text-2xl font-bold">GitHub Release Feed</h1>
+          <AuthState v-slot="{ loggedIn, clear }">
+            <Button v-if="loggedIn" variant="destructive" @click="handleLogout" class="sm:ml-auto">
+              <LogOutIcon class="h-4 w-4 mr-2" />
+              Logout
+            </Button>
+            <Button v-else @click="navigateTo('/login')" class="sm:ml-auto">
+              <LogInIcon class="h-4 w-4 mr-2" />
+              Login with GitHub
+            </Button>
+          </AuthState>
         </div>
-        <UProgress v-if="loading" :value="progress * 100" color="primary" class="mt-4" />
+        <Progress v-if="loading" :value="progress * 100" class="mt-4" />
       </header>
 
       <!-- Main Content -->
-      <main>
-        <div v-if="!token">
-          <UCard class="my-8">
-            <template #header>
-              <h3 class="text-lg font-semibold">Welcome to GitHub Release Feed</h3>
-            </template>
-            <div class="prose">
+      <main class="pb-8">
+        <div v-if="!loggedIn">
+          <Card class="my-4 sm:my-8">
+            <CardHeader>
+              <CardTitle>Welcome to GitHub Release Feed</CardTitle>
+            </CardHeader>
+            <CardContent class="prose">
               <p>
                 This tool helps you track releases from your starred GitHub repositories.
-                To get started:
+                Please login with GitHub to get started.
               </p>
-              <ol>
-                <li>Create a <a href="https://github.com/settings/tokens/new" target="_blank">GitHub Personal Access
-                    Token</a></li>
-                <li>Give it 'read' access to your starred repositories</li>
-                <li>Paste the token above and click Login</li>
-              </ol>
-            </div>
-          </UCard>
+            </CardContent>
+          </Card>
         </div>
 
         <div v-else>
           <div v-if="error" class="mb-4">
-            <UAlert :title="error" color="red" variant="soft" icon="i-carbon-warning" />
+            <Alert variant="destructive">
+              <AlertCircleIcon class="h-4 w-4" />
+              <AlertTitle>Error</AlertTitle>
+              <AlertDescription>{{ error }}</AlertDescription>
+            </Alert>
           </div>
 
-          <div class="grid gap-6">
+          <div class="grid gap-4 sm:gap-6">
             <template v-if="visibleReleases.length > 0">
-              <TransitionGroup name="list" tag="div" class="grid gap-6">
+              <TransitionGroup name="list" tag="div" class="grid gap-4 sm:gap-6">
                 <ReleaseCard v-for="release in visibleReleases" :key="release.id" :release="release" />
               </TransitionGroup>
             </template>
-            <div v-else-if="!loading" class="text-center py-8 text-gray-500">
+            <div v-else-if="!loading" class="text-center py-8 text-muted-foreground">
               No releases found in the last 3 months
             </div>
           </div>
 
-          <div v-if="hasMoreReleases" ref="loadMoreTrigger" class="py-8 text-center">
-            <UButton v-if="!loading" @click="loadMore" label="Load More" />
+          <div v-if="hasMoreReleases" ref="loadMoreTrigger" class="py-6 sm:py-8 text-center">
+            <Button v-if="!loading" @click="loadMore" class="w-full sm:w-auto">Load More</Button>
             <div v-else class="flex justify-center">
-              <div class="animate-spin rounded-full h-8 w-8 border-4 border-primary-500 border-t-transparent"></div>
+              <div class="animate-spin rounded-full h-8 w-8 border-4 border-primary border-t-transparent"></div>
             </div>
           </div>
         </div>
       </main>
-    </UContainer>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { LogInIcon, LogOutIcon, AlertCircleIcon } from 'lucide-vue-next'
+
+const { loggedIn, clear } = useUserSession()
 const {
-  token,
   releases,
   loading,
   progress,
   error,
-  setToken,
-  clearToken,
   fetchReleases
 } = useGithub()
 
-const inputToken = ref('')
 const page = ref(1)
 const perPage = 20
 
@@ -129,25 +123,16 @@ if (process.client) {
   })
 }
 
-// Check localStorage on mount and handle token
-onMounted(async () => {
-  const savedToken = localStorage.getItem('github_token')
-  if (savedToken) {
-    setToken(savedToken)
+// Fetch releases when logged in
+watchEffect(async () => {
+  if (loggedIn.value) {
     await fetchReleases()
   }
 })
 
-async function login() {
-  if (!inputToken.value) return
-  setToken(inputToken.value)
-  await fetchReleases()
-}
-
-function logout() {
-  clearToken()
-  inputToken.value = ''
-  page.value = 1
+async function handleLogout() {
+  await clear()
+  navigateTo('/login')
 }
 
 // Add SEO metadata
