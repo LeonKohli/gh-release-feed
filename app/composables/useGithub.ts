@@ -128,13 +128,11 @@ export const useGithubStore = defineStore('github', {
     state: () => ({
         releases: [] as ReleaseObj[],
         loading: false,
-        progress: 0,
         error: null as string | null,
         lastFetchTimestamp: null as number | null,
         pageSize: 20,
         db: null as IDBPDatabase<GithubReleasesDBSchema> | null,
         reposProcessed: 0,
-        totalReposWithReleases: 0,
         retries: 0,
         rateLimitCost: 0,
         rateLimitRemaining: 5000,
@@ -151,11 +149,9 @@ export const useGithubStore = defineStore('github', {
         clearData() {
             this.releases = []
             this.loading = false
-            this.progress = 0
             this.error = null
             this.lastFetchTimestamp = null
             this.reposProcessed = 0
-            this.totalReposWithReleases = 0
             this.retries = 0
         },
 
@@ -265,15 +261,6 @@ export const useGithubStore = defineStore('github', {
             } catch (error) {
                 console.error('Error clearing cache:', error)
             }
-        },
-
-        updateProgress() {
-            // Calculate progress based on repositories with releases
-            if (this.totalReposWithReleases === 0) {
-                this.progress = 0
-            } else {
-                this.progress = Math.min(this.reposProcessed / this.totalReposWithReleases, 1)
-            }
         }
     }
 })
@@ -336,8 +323,11 @@ export const useGithub = () => {
     const recentReleasesQuery = `
     query($cursor: String, $pageSize: Int!) {
       viewer {
-        starredRepositories(first: $pageSize, after: $cursor, orderBy: {field: STARRED_AT, direction: DESC}) {
-          totalCount
+        starredRepositories(
+          first: $pageSize, 
+          after: $cursor, 
+          orderBy: {field: STARRED_AT, direction: DESC}
+        ) {
           pageInfo {
             endCursor
             hasNextPage
@@ -346,9 +336,30 @@ export const useGithub = () => {
             node {
               name
               url
-              description
-              languages(first: 10) {
-                totalCount
+              owner {
+                login
+                avatarUrl
+                url
+              }
+              stargazerCount
+              releases(
+                first: 5, 
+                orderBy: {field: CREATED_AT, direction: DESC}
+              ) {
+                edges {
+                  node {
+                    id
+                    isDraft
+                    isPrerelease
+                    name
+                    tagName
+                    publishedAt
+                    url
+                    descriptionHTML
+                  }
+                }
+              }
+              languages(first: 5, orderBy: {field: SIZE, direction: DESC}) {
                 edges {
                   node {
                     id
@@ -363,42 +374,14 @@ export const useGithub = () => {
                 id
                 name
               }
-              owner {
-                login
-                avatarUrl
-                url
-              }
-              stargazerCount
-              releases(first: 10, orderBy: { field: CREATED_AT, direction: DESC }) {
-                totalCount
-                pageInfo {
-                  hasNextPage
-                  endCursor
-                }
-                edges {
-                  node {
-                    id
-                    isDraft
-                    isPrerelease
-                    name
-                    tagName
-                    publishedAt
-                    updatedAt
-                    url
-                    descriptionHTML
-                  }
-                }
-              }
             }
           }
         }
       }
       rateLimit {
         cost
-        limit
         remaining
         resetAt
-        used
       }
     }
   `
@@ -419,7 +402,7 @@ export const useGithub = () => {
             throw new Error('Invalid response format from GitHub API')
         }
 
-        const { edges, pageInfo, totalCount } = response.viewer.starredRepositories
+        const { edges, pageInfo } = response.viewer.starredRepositories
         store.updateRateLimit(response.rateLimit)
 
         if (!Array.isArray(edges)) {
@@ -430,105 +413,97 @@ export const useGithub = () => {
         const existingReleases = new Map(store.releases.map(r => [r.id, r]))
         let newReleasesCount = 0
 
-        // Count repositories with releases in this batch
-        const reposWithReleases = edges.filter(edge => 
-            edge.node?.releases?.edges?.some(release => 
-                release.node && 
-                new Date(release.node.publishedAt) >= startingDate
-            )
-        ).length
-
-        // Update total repos with releases
-        store.totalReposWithReleases += reposWithReleases
-
-        // Update progress calculation
-        const updateProgress = () => {
-            if (store.totalReposWithReleases === 0) {
-                store.progress = 0
-            } else {
-                store.progress = Math.min(store.reposProcessed / store.totalReposWithReleases, 1)
-            }
-        }
-
-        for (const edge of edges) {
-            const repoNode = edge.node
-            if (!repoNode?.releases?.edges) continue
+        // Process repositories in parallel batches
+        const BATCH_SIZE = 5 // Process 5 repos at a time
+        for (let i = 0; i < edges.length; i += BATCH_SIZE) {
+            const batch = edges.slice(i, i + BATCH_SIZE)
             
-            const newReleases = repoNode.releases.edges
-                .map(releaseEdge => releaseEdge.node)
-                .filter(release => 
-                    release && 
-                    new Date(release.publishedAt) >= startingDate &&
-                    !existingReleases.has(release.id)
-                )
-                .map(release => ({
-                    id: release.id,
-                    name: release.name,
-                    tagName: release.tagName,
-                    publishedAt: release.publishedAt,
-                    url: release.url,
-                    isDraft: release.isDraft,
-                    isPrerelease: release.isPrerelease,
-                    descriptionHTML: release.descriptionHTML || '',
-                    repo: {
-                        name: repoNode.name,
-                        url: repoNode.url,
-                        description: repoNode.description || '',
-                        stargazerCount: repoNode.stargazerCount,
-                        owner: repoNode.owner,
-                        primaryLanguage: repoNode.primaryLanguage || { id: '', name: '' },
-                        languages: {
-                            totalCount: repoNode.languages.totalCount,
-                            edges: repoNode.languages.edges
-                        },
-                        licenseInfo: repoNode.licenseInfo
+            // Process batch in parallel
+            const batchResults = await Promise.all(batch.map(async edge => {
+                const repoNode = edge.node
+                if (!repoNode?.releases?.edges) return []
+                
+                const newReleases = repoNode.releases.edges
+                    .map(releaseEdge => releaseEdge.node)
+                    .filter(release => 
+                        release && 
+                        new Date(release.publishedAt) >= startingDate &&
+                        !existingReleases.has(release.id)
+                    )
+                    .map(release => ({
+                        id: release.id,
+                        name: release.name,
+                        tagName: release.tagName,
+                        publishedAt: release.publishedAt,
+                        url: release.url,
+                        isDraft: release.isDraft,
+                        isPrerelease: release.isPrerelease,
+                        descriptionHTML: release.descriptionHTML || '',
+                        repo: {
+                            name: repoNode.name,
+                            url: repoNode.url,
+                            description: repoNode.description || '',
+                            stargazerCount: repoNode.stargazerCount,
+                            owner: repoNode.owner,
+                            primaryLanguage: repoNode.primaryLanguage || { id: '', name: '' },
+                            languages: {
+                                totalCount: repoNode.languages.totalCount,
+                                edges: repoNode.languages.edges
+                            },
+                            licenseInfo: repoNode.licenseInfo
+                        }
+                    }))
+
+                if (newReleases.length === 0) return []
+
+                // Process each release in parallel
+                await Promise.all(newReleases.map(async release => {
+                    // Try to get cached description first
+                    if (!release.descriptionHTML && store.db) {
+                        const cachedDescription = await store.db.get(
+                            'descriptions',
+                            `${release.id}-${release.publishedAt}`
+                        )
+                        if (cachedDescription) {
+                            release.descriptionHTML = cachedDescription
+                        }
                     }
+
+                    // Cache the description if it exists
+                    if (release.descriptionHTML && store.db) {
+                        await store.db.put(
+                            'descriptions',
+                            release.descriptionHTML,
+                            `${release.id}-${release.publishedAt}`
+                        )
+                    }
+
+                    // Cache the full release object
+                    if (store.db) {
+                        await store.db.put('releases', {
+                            ...release,
+                            cachedAt: Date.now()
+                        })
+                    }
+
+                    // Add to existing releases map
+                    existingReleases.set(release.id, release)
                 }))
 
-            if (newReleases.length === 0) continue
+                newReleasesCount += newReleases.length
+                store.reposProcessed++
+                
+                return newReleases
+            }))
 
-            for (const release of newReleases) {
-                // Try to get cached description first
-                if (!release.descriptionHTML && store.db) {
-                    const cachedDescription = await store.db.get(
-                        'descriptions',
-                        `${release.id}-${release.publishedAt}`
-                    )
-                    if (cachedDescription) {
-                        release.descriptionHTML = cachedDescription
-                    }
-                }
-
-                // Cache the description if it exists
-                if (release.descriptionHTML && store.db) {
-                    await store.db.put(
-                        'descriptions',
-                        release.descriptionHTML,
-                        `${release.id}-${release.publishedAt}`
-                    )
-                }
-
-                // Cache the full release object
-                if (store.db) {
-                    await store.db.put('releases', {
-                        ...release,
-                        cachedAt: Date.now()
-                    })
-                }
-
-                // Add to existing releases map
-                existingReleases.set(release.id, release)
-            }
-
-            newReleasesCount += newReleases.length
-            store.reposProcessed++
-            updateProgress()
+            // Flatten batch results and add to releases
+            const newReleases = batchResults.flat()
+            
+            // Update the store's releases with all releases from the map
+            store.releases = Array.from(existingReleases.values()).sort((a, b) =>
+                new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime()
+            )
         }
-
-        // Update the store's releases with all releases from the map
-        store.releases = Array.from(existingReleases.values()).sort((a, b) =>
-            new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime()
-        )
 
         // Update metadata after successful fetch
         await store.updateMetadata()
@@ -569,10 +544,8 @@ export const useGithub = () => {
         try {
             if (!cursor) {
                 store.loading = true
-                store.progress = 0
                 store.error = null
                 store.reposProcessed = 0
-                store.totalReposWithReleases = 0
                 store.retries = 0
                 
                 if (!store.db) {
@@ -632,7 +605,6 @@ export const useGithub = () => {
     return {
         releases: computed(() => store.releases),
         loading: computed(() => store.loading),
-        progress: computed(() => store.progress),
         error: computed(() => store.error),
         reposProcessed: computed(() => store.reposProcessed),
         rateLimitRemaining: computed(() => store.rateLimitRemaining),

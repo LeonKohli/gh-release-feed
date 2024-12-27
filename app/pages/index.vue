@@ -48,6 +48,10 @@
                               <span class="font-medium">{{ reposProcessed }}</span>
                             </div>
                             <div class="flex items-center justify-between gap-4">
+                              <span class="text-muted-foreground">Current Batch:</span>
+                              <span class="font-medium">{{ Math.floor(reposProcessed / 5) + 1 }}</span>
+                            </div>
+                            <div class="flex items-center justify-between gap-4">
                               <span class="text-muted-foreground">API Calls Left:</span>
                               <span class="font-medium">{{ rateLimitRemaining }}</span>
                             </div>
@@ -60,7 +64,7 @@
                               <span class="font-medium">{{ formatResetTime }}</span>
                             </div>
                             <div class="pt-1 text-xs text-muted-foreground">
-                              Loading releases from starred repositories...
+                              Processing repositories in parallel...
                             </div>
                           </div>
                         </div>
@@ -186,7 +190,7 @@
 </template>
 
 <script setup lang="ts">
-import { LogInIcon, LogOutIcon, AlertCircleIcon } from 'lucide-vue-next'
+import { LogInIcon, LogOutIcon, AlertCircleIcon, Loader2Icon, RefreshCwIcon } from 'lucide-vue-next'
 import { useStorage, useElementVisibility, useTimeAgo } from '@vueuse/core'
 
 const { loggedIn, clear } = useUserSession()
