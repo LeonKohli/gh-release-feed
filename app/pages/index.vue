@@ -1,7 +1,7 @@
 <!-- pages/index.vue -->
 <template>
   <div class="min-h-screen bg-background">
-    <div class="container px-4 sm:px-6">
+    <div class="container max-w-full px-4 mx-auto sm:px-6 sm:max-w-screen-xl">
       <!-- Header -->
       <header class="sticky top-0 z-10 py-4 sm:py-6 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div class="flex flex-col gap-4">
@@ -121,7 +121,7 @@
       <!-- Main Content -->
       <main class="pb-8">
         <div v-if="!loggedIn">
-          <Card class="my-4 sm:my-8">
+          <Card class="my-4 overflow-hidden sm:my-8">
             <CardHeader>
               <CardTitle>Welcome to GitHub Release Feed</CardTitle>
             </CardHeader>
@@ -139,17 +139,17 @@
             <Alert variant="destructive">
               <AlertCircleIcon class="w-4 h-4" />
               <AlertTitle>Error</AlertTitle>
-              <AlertDescription>{{ error }}</AlertDescription>
+              <AlertDescription class="break-words">{{ error }}</AlertDescription>
             </Alert>
           </div>
 
           <!-- Loading Skeleton -->
-          <div v-if="loading && (!visibleReleases.length || reposProcessed === 0)" class="grid gap-4 sm:gap-6">
-            <Card v-for="n in 3" :key="n" class="p-3 sm:p-6">
+          <div v-if="loading && (!visibleReleases.length || reposProcessed === 0)" class="grid w-full gap-4 sm:gap-6">
+            <Card v-for="n in 3" :key="n" class="w-full p-3 overflow-hidden sm:p-6">
               <div class="space-y-4 animate-pulse">
                 <div class="flex items-center gap-3">
-                  <div class="w-8 h-8 rounded-full bg-muted"></div>
-                  <div class="flex-1 space-y-2">
+                  <div class="flex-shrink-0 w-8 h-8 rounded-full bg-muted"></div>
+                  <div class="flex-1 min-w-0 space-y-2">
                     <div class="w-1/4 h-4 rounded bg-muted"></div>
                     <div class="w-1/3 h-3 rounded bg-muted"></div>
                   </div>
@@ -162,10 +162,10 @@
             </Card>
           </div>
 
-          <div v-else class="grid gap-4 sm:gap-6">
+          <div v-else class="grid w-full gap-4 sm:gap-6">
             <template v-if="visibleReleases.length > 0">
-              <div class="grid gap-4 sm:gap-6">
-                <ReleaseCard v-for="release in visibleReleases" :key="release.id" :release="release" />
+              <div class="grid w-full gap-4 sm:gap-6">
+                <ReleaseCard v-for="release in visibleReleases" :key="release.id" :release="release" class="w-full" />
               </div>
             </template>
             <div v-else-if="!loading" class="py-8 text-center text-muted-foreground">
@@ -174,7 +174,7 @@
           </div>
 
           <div v-if="hasMoreReleases" ref="loadMoreTrigger" class="py-6 text-center sm:py-8">
-            <Button v-if="!loading" @click="page++" class="w-full sm:w-auto">Load More</Button>
+            <Button v-if="!loading" @click="page++" class="w-full max-w-xs sm:w-auto">Load More</Button>
             <div v-else class="flex justify-center">
               <div class="w-8 h-8 border-4 rounded-full animate-spin border-primary border-t-transparent"></div>
             </div>

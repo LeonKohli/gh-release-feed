@@ -1,11 +1,11 @@
 <!-- components/releases/ReleaseCard.vue -->
 <template>
-  <Card class="p-3 transition-all duration-200 sm:p-6 release-card group/card hover:shadow-lg">
+  <Card class="w-full p-3 overflow-hidden transition-all duration-200 sm:p-6 release-card group/card hover:shadow-lg">
     <div class="flex flex-col gap-3 sm:gap-4">
       <!-- Header -->
       <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div class="flex items-center gap-3">
-          <Avatar class="w-8 h-8 sm:w-10 sm:h-10 shrink-0 ">
+        <div class="flex items-start gap-3 min-w-0">
+          <Avatar class="flex-shrink-0 w-8 h-8 sm:w-10 sm:h-10">
             <NuxtImg 
               :src="release.repo.owner.avatarUrl" 
               :alt="release.repo.owner.login" 
@@ -16,17 +16,17 @@
             />
             <AvatarFallback class="hidden">{{ release.repo.owner.login.slice(0, 2).toUpperCase() }}</AvatarFallback>
           </Avatar>
-          <div>
+          <div class="min-w-0 flex-1">
             <div class="flex flex-wrap items-center gap-2">
-              <NuxtLink :to="release.repo.owner.url" target="_blank" rel="noopener noreferrer" class="text-foreground hover:text-foreground/90 hover:underline">
+              <NuxtLink :to="release.repo.owner.url" target="_blank" rel="noopener noreferrer" class="truncate text-foreground hover:text-foreground/90 hover:underline">
                 {{ release.repo.owner.login }}
               </NuxtLink>
-              <span class="text-muted-foreground">/</span>
-              <NuxtLink :to="release.repo.url" target="_blank" rel="noopener noreferrer" class="font-medium text-foreground hover:text-foreground/90 hover:underline">
+              <span class="flex-shrink-0 text-muted-foreground">/</span>
+              <NuxtLink :to="release.repo.url" target="_blank" rel="noopener noreferrer" class="truncate font-medium text-foreground hover:text-foreground/90 hover:underline">
                 {{ release.repo.name }}
               </NuxtLink>
             </div>
-            <div class="flex items-center gap-2 text-sm text-muted-foreground">
+            <div class="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
               <span 
                 class="transition-colors hover:text-foreground cursor-help" 
                 :title="exactDate"
@@ -38,7 +38,7 @@
                 class="flex items-center gap-1 transition-colors hover:text-foreground cursor-help" 
                 :title="`${exactStars} stars`"
               >
-                <Icon name="lucide:star" class="w-4 h-4 text-yellow-500" />
+                <Icon name="lucide:star" class="flex-shrink-0 w-4 h-4 text-yellow-500" />
                 {{ formattedStars }}
               </span>
               <span class="text-border">•</span>
@@ -46,21 +46,21 @@
                 class="flex items-center gap-1 transition-colors hover:text-foreground cursor-help"
                 :title="`Tag: ${release.tagName}`"
               >
-                <Icon name="lucide:tag" class="w-4 h-4" />
-                {{ release.tagName }}
+                <Icon name="lucide:tag" class="flex-shrink-0 w-4 h-4" />
+                <span class="truncate">{{ release.tagName }}</span>
               </span>
             </div>
           </div>
         </div>
 
-        <div class="flex gap-2">
+        <div class="flex flex-wrap gap-2">
           <Badge 
             v-memo="[release.repo.licenseInfo]" 
             :variant="licenseColor === 'green' ? 'default' : 'destructive'"
-            class="gap-1 transition-all whitespace-nowrap group-hover/card:shadow-sm"
+            class="flex-shrink-0 gap-1 transition-all whitespace-nowrap group-hover/card:shadow-sm"
             :title="licenseText === 'No License' ? 'This repository has no license' : `License: ${licenseText}`"
           >
-            <Icon name="lucide:file-text" class="w-4 h-4" />
+            <Icon name="lucide:file-text" class="flex-shrink-0 w-4 h-4" />
             {{ licenseText }}
           </Badge>
         </div>
@@ -72,10 +72,10 @@
           :to="release.url" 
           target="_blank"
           rel="noopener noreferrer"
-          class="text-lg font-semibold sm:text-xl hover:text-primary hover:underline group/title"
+          class="text-lg font-semibold break-words sm:text-xl hover:text-primary hover:underline group/title"
         >
           <span class="flex items-center gap-2">
-            <Icon name="lucide:tag" class="w-5 h-5 transition-colors text-muted-foreground group-hover/title:text-primary" />
+            <Icon name="lucide:tag" class="flex-shrink-0 w-5 h-5 transition-colors text-muted-foreground group-hover/title:text-primary" />
             {{ release.name }}
           </span>
         </NuxtLink>
@@ -84,7 +84,7 @@
           <Badge 
             v-if="release.isPrerelease" 
             variant="secondary" 
-            class="text-orange-800 transition-all bg-orange-100 hover:bg-orange-100 group-hover/card:shadow-sm"
+            class="flex-shrink-0 text-orange-800 transition-all bg-orange-100 hover:bg-orange-100 group-hover/card:shadow-sm"
             title="This is a pre-release version"
           >
             Pre-release
@@ -92,7 +92,7 @@
           <Badge 
             v-if="release.isDraft" 
             variant="secondary" 
-            class="text-gray-800 transition-all bg-gray-100 hover:bg-gray-100 group-hover/card:shadow-sm"
+            class="flex-shrink-0 text-gray-800 transition-all bg-gray-100 hover:bg-gray-100 group-hover/card:shadow-sm"
             title="This release is still in draft"
           >
             Draft
@@ -109,6 +109,7 @@
               :html="sanitizedDescription"
               v-model:isExpanded="isContentExpanded"
               @update:isExpanded="onContentExpandChange"
+              class="max-w-full"
             />
           </div>
         </Suspense>
@@ -117,13 +118,13 @@
       <!-- Bottom Bar with Languages and Expand/Collapse -->
       <div class="flex items-center justify-between gap-3 pt-2 border-t border-border/40">
         <!-- Languages with truncation -->
-        <div class="flex flex-wrap gap-1.5 sm:gap-2 flex-1 min-w-0">
+        <div class="flex flex-wrap gap-1.5 sm:gap-2 min-w-0">
           <Badge 
             v-for="lang in visibleLanguages" 
             :key="lang.id"
             :variant="lang.id === release.repo.primaryLanguage?.id ? 'default' : 'secondary'"
             v-memo="[lang.id, lang.name, release.repo.primaryLanguage?.id]"
-            class="text-xs transition-all whitespace-nowrap sm:text-sm group-hover/card:shadow-sm"
+            class="flex-shrink-0 text-xs transition-all whitespace-nowrap sm:text-sm group-hover/card:shadow-sm"
             :title="lang.id === release.repo.primaryLanguage?.id ? 'Primary language' : undefined"
           >
             {{ lang.name }}
@@ -131,7 +132,7 @@
           <Badge 
             v-if="hiddenLanguagesCount"
             variant="secondary"
-            class="text-xs transition-all whitespace-nowrap sm:text-sm group-hover/card:shadow-sm"
+            class="flex-shrink-0 text-xs transition-all whitespace-nowrap sm:text-sm group-hover/card:shadow-sm"
             :title="`${hiddenLanguagesCount} more languages`"
           >
             +{{ hiddenLanguagesCount }} more
@@ -143,13 +144,13 @@
           v-if="hasExpandableContent"
           variant="ghost" 
           size="sm"
-          class="shrink-0"
+          class="flex-shrink-0"
           @click="isContentExpanded = !isContentExpanded"
         >
           <span class="flex items-center gap-1">
             {{ isContentExpanded ? 'Show less' : 'Show more' }}
-            <Icon v-if="!isContentExpanded" name="lucide:chevron-down" class="w-4 h-4" />
-            <Icon v-else name="lucide:chevron-up" class="w-4 h-4" />
+            <Icon v-if="!isContentExpanded" name="lucide:chevron-down" class="flex-shrink-0 w-4 h-4" />
+            <Icon v-else name="lucide:chevron-up" class="flex-shrink-0 w-4 h-4" />
           </span>
         </Button>
       </div>
@@ -259,5 +260,7 @@ function onContentExpandChange(expanded: boolean) {
 <style>
 .release-card {
   contain: content;
+  max-width: 100%;
+  width: 100%;
 }
 </style>
