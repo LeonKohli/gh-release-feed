@@ -187,21 +187,12 @@
 
 <script setup lang="ts">
 import { LogInIcon, LogOutIcon, AlertCircleIcon } from 'lucide-vue-next'
-import { useStorage, useDocumentVisibility, useElementVisibility, useTimeAgo, useEventListener } from '@vueuse/core'
-
-// Use document visibility to pause/resume loading when tab is hidden
-const visibility = useDocumentVisibility()
-watch(visibility, (currentVisibility) => {
-  if (currentVisibility === 'visible' && loggedIn.value) {
-    fetchReleases()
-  }
-})
+import { useStorage, useElementVisibility, useTimeAgo } from '@vueuse/core'
 
 const { loggedIn, clear } = useUserSession()
 const {
   releases,
   loading,
-  progress,
   error,
   reposProcessed,
   rateLimitRemaining,
@@ -212,42 +203,32 @@ const {
 } = useGithub()
 
 const page = ref(1)
-const perPage = 20
+const perPage = useStorage('release-feed-page-size', 20)
 
 const visibleReleases = computed(() => {
-  return releases.value?.slice(0, page.value * perPage) || []
+  return releases.value?.slice(0, page.value * (perPage.value || 20)) || []
 })
 
 const hasMoreReleases = computed(() => {
   return visibleReleases.value.length < (releases.value?.length || 0)
 })
 
-// Use element visibility for infinite scroll with options
+// Use element visibility for infinite scroll
 const loadMoreTrigger = ref<HTMLElement | null>(null)
 const isLoadMoreVisible = useElementVisibility(loadMoreTrigger)
-
-// Use throttle for smoother scroll loading
-const handleLoadMore = useThrottleFn(() => {
-  if (!loading.value && hasMoreReleases.value) {
-    page.value++
-  }
-}, 500)
 
 // Watch visibility with throttled handler
 watchDebounced(
   isLoadMoreVisible,
   (visible) => {
-    if (visible) handleLoadMore()
+    if (visible && !loading.value && hasMoreReleases.value) {
+      page.value++
+    }
   },
   { debounce: 100 }
 )
 
-// Force refresh releases with better error handling
-const refreshEvent = createEventHook<Error>()
-refreshEvent.on((error) => {
-  console.error('Error refreshing releases:', error)
-})
-
+// Force refresh releases
 const handleRefresh = useDebounceFn(async () => {
   if (loading.value) return
   try {
@@ -255,40 +236,20 @@ const handleRefresh = useDebounceFn(async () => {
     await clearCache() // Clear the cache first
     await fetchReleases() // Then fetch fresh data
   } catch (error) {
-    if (error instanceof Error) {
-      refreshEvent.trigger(error)
-    }
+    console.error('Error refreshing releases:', error)
   }
 }, 300)
 
-// Use time ago with options for rate limit reset time
+// Format time ago for rate limit reset
 const formatResetTime = computed(() => {
   if (!rateLimitResetAt.value) return ''
   return useTimeAgo(new Date(rateLimitResetAt.value)).value
 })
 
 // Initial data loading
-const { isLoading } = useAsyncState(
-  async () => {
-    if (loggedIn.value) {
-      await fetchReleases()
-    }
-  },
-  null,
-  {
-    immediate: true,
-    onError: (error) => {
-      console.error('Error loading initial data:', error)
-    }
-  }
-)
-
-// Keyboard shortcuts
-useEventListener(document, 'keydown', (e: KeyboardEvent) => {
-  // Refresh on Ctrl/Cmd + R
-  if ((e.ctrlKey || e.metaKey) && e.key === 'r' && !loading.value) {
-    e.preventDefault()
-    handleRefresh()
+watchEffect(async () => {
+  if (loggedIn.value) {
+    await fetchReleases()
   }
 })
 
