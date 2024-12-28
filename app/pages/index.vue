@@ -107,14 +107,14 @@
                     <DropdownMenuLabel>Account</DropdownMenuLabel>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem @click="handleLogout">
-                      <LogOutIcon class="w-4 h-4 mr-2" />
+                      <Icon name="lucide:log-out" class="w-4 h-4 mr-2" />
                       <span>Logout</span>
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>
               <Button v-else @click="navigateTo('/login')" class="gap-2">
-                <LogInIcon class="w-4 h-4" />
+                <Icon name="lucide:log-in" class="w-4 h-4" />
                 Login with GitHub
               </Button>
             </AuthState>
@@ -141,7 +141,7 @@
         <div v-else>
           <div v-if="error" class="mb-4">
             <Alert variant="destructive">
-              <AlertCircleIcon class="w-4 h-4" />
+              <Icon name="mdi:alert-circle" class="w-4 h-4" />
               <AlertTitle>Error</AlertTitle>
               <AlertDescription class="break-words">{{ error }}</AlertDescription>
             </Alert>
@@ -190,7 +190,6 @@
 </template>
 
 <script setup lang="ts">
-import { LogInIcon, LogOutIcon, AlertCircleIcon, Loader2Icon, RefreshCwIcon } from 'lucide-vue-next'
 import { useStorage, useElementVisibility, useTimeAgo } from '@vueuse/core'
 
 const { loggedIn, clear } = useUserSession()
