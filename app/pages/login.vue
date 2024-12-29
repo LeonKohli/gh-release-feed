@@ -8,13 +8,13 @@
       <CardContent>
         <div v-if="error" class="mb-4">
           <Alert variant="destructive">
-            <AlertCircleIcon class="w-4 h-4" />
+            <Icon name="mdi:alert-circle" class="w-4 h-4" />
             <AlertTitle>Error</AlertTitle>
             <AlertDescription>{{ error }}</AlertDescription>
           </Alert>
         </div>
         <Button class="w-full" @click="signInWithGithub">
-          <GithubIcon class="w-4 h-4 mr-2" />
+          <Icon name="mdi:github" class="w-4 h-4 mr-2" />
           Continue with GitHub
         </Button>
       </CardContent>
@@ -23,12 +23,10 @@
 </template>
 
 <script setup lang="ts">
-import { GithubIcon, AlertCircleIcon } from 'lucide-vue-next'
-
 const route = useRoute()
 const error = computed(() => route.query.error as string)
 
 function signInWithGithub() {
   navigateTo('api/auth/github', { external: true })
 }
-</script> 
+</script>
