@@ -128,6 +128,7 @@ export const useGithubStore = defineStore('github', {
     state: () => ({
         releases: [] as ReleaseObj[],
         loading: false,
+        backgroundLoading: false,
         error: null as string | null,
         lastFetchTimestamp: null as number | null,
         pageSize: 20,
@@ -144,15 +145,18 @@ export const useGithubStore = defineStore('github', {
         setError(error: any) {
             this.error = error?.message || 'An unknown error occurred'
             this.loading = false
+            this.backgroundLoading = false
         },
 
         clearData() {
             this.releases = []
             this.loading = false
+            this.backgroundLoading = false
             this.error = null
             this.lastFetchTimestamp = null
             this.reposProcessed = 0
             this.retries = 0
+            this.rateLimitCost = 0
         },
 
         async initDB() {
@@ -336,6 +340,7 @@ export const useGithub = () => {
             node {
               name
               url
+              description
               owner {
                 login
                 avatarUrl
@@ -360,6 +365,7 @@ export const useGithub = () => {
                 }
               }
               languages(first: 5, orderBy: {field: SIZE, direction: DESC}) {
+                totalCount
                 edges {
                   node {
                     id
@@ -407,6 +413,11 @@ export const useGithub = () => {
 
         if (!Array.isArray(edges)) {
             throw new Error('Invalid response format: edges is not an array')
+        }
+
+        // Set background loading when processing data
+        if (cursor) {
+            store.backgroundLoading = true
         }
 
         // Create a Map of existing releases for faster lookup
@@ -517,8 +528,7 @@ export const useGithub = () => {
                 `Cost: ${store.rateLimitCost}). ` +
                 `Resets in ${resetIn} minutes at ${resetDate.toLocaleTimeString()}`
             ))
-            store.loading = false
-            return
+            return // setError already resets loading states
         }
 
         // Only continue fetching if we're finding new releases
@@ -527,6 +537,7 @@ export const useGithub = () => {
             await fetchReleases(pageInfo.endCursor)
         } else {
             store.loading = false
+            store.backgroundLoading = false
         }
     }
 
@@ -543,7 +554,9 @@ export const useGithub = () => {
 
         try {
             if (!cursor) {
+                // Initial fetch
                 store.loading = true
+                store.backgroundLoading = false
                 store.error = null
                 store.reposProcessed = 0
                 store.retries = 0
@@ -557,13 +570,23 @@ export const useGithub = () => {
                 
                 if (hasCachedData && !store.shouldRefetch()) {
                     store.loading = false
+                    store.backgroundLoading = false
                     return
+                }
+
+                // Set loading states based on cache status
+                if (hasCachedData && store.shouldRefetch()) {
+                    store.loading = false
+                    store.backgroundLoading = true
                 }
 
                 // Clear releases when starting a fresh fetch
                 if (!hasCachedData || store.shouldRefetch()) {
                     store.releases = []
                 }
+            } else {
+                // Subsequent fetches
+                store.backgroundLoading = true
             }
 
             const response = await fetchWithRetry(async () => 
@@ -591,7 +614,6 @@ export const useGithub = () => {
                 console.error('Error fetching GitHub releases:', error)
                 store.setError(error)
             }
-            store.loading = false
         }
     }
 
@@ -605,6 +627,7 @@ export const useGithub = () => {
     return {
         releases: computed(() => store.releases),
         loading: computed(() => store.loading),
+        backgroundLoading: computed(() => store.backgroundLoading),
         error: computed(() => store.error),
         reposProcessed: computed(() => store.reposProcessed),
         rateLimitRemaining: computed(() => store.rateLimitRemaining),

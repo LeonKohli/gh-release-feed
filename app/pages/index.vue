@@ -76,9 +76,26 @@
                       size="icon"
                       class="relative"
                       @click="handleRefresh"
-                      title="Refresh releases"
+                      :disabled="isLoadingAny"
+                      :title="loadingState"
                     >
-                      <Icon name="lucide:refresh-cw" class="w-5 h-5" />
+                      <Icon 
+                        name="lucide:refresh-cw" 
+                        class="w-5 h-5" 
+                        :class="{ 'animate-spin': isLoadingAny }" 
+                      />
+                      <span class="absolute -top-1 -right-1">
+                        <span class="relative flex w-2 h-2">
+                          <span 
+                            v-if="isLoadingAny"
+                            class="absolute inline-flex w-full h-full rounded-full opacity-75 animate-ping bg-primary"
+                          ></span>
+                          <span 
+                            v-if="isLoadingAny"
+                            class="relative inline-flex w-2 h-2 rounded-full bg-primary"
+                          ></span>
+                        </span>
+                      </span>
                     </Button>
                   </template>
                   <template #fallback>
@@ -148,7 +165,10 @@
           </div>
 
           <!-- Loading Skeleton -->
-          <div v-if="loading && (!visibleReleases.length || reposProcessed === 0)" class="grid w-full gap-4 sm:gap-6">
+          <div 
+            v-if="loading && (!visibleReleases.length || reposProcessed === 0)" 
+            class="grid w-full gap-4 sm:gap-6"
+          >
             <Card v-for="n in 3" :key="n" class="w-full p-3 overflow-hidden sm:p-6">
               <div class="space-y-4 animate-pulse">
                 <div class="flex items-center gap-3">
@@ -172,13 +192,26 @@
                 <ReleaseCard v-for="release in visibleReleases" :key="release.id" :release="release" class="w-full" />
               </div>
             </template>
-            <div v-else-if="!loading" class="py-8 text-center text-muted-foreground">
+            <div 
+              v-else-if="!isLoadingAny && reposProcessed > 0" 
+              class="py-8 text-center text-muted-foreground"
+            >
               No releases found in the last 3 months
             </div>
           </div>
 
           <div v-if="hasMoreReleases" ref="loadMoreTrigger" class="py-6 text-center sm:py-8">
-            <Button v-if="!loading" @click="page++" class="w-full max-w-xs sm:w-auto">Load More</Button>
+            <Button 
+              v-if="!loading" 
+              @click="page++" 
+              class="w-full max-w-xs sm:w-auto"
+              :disabled="backgroundLoading"
+            >
+              <span>Load More</span>
+              <span v-if="backgroundLoading" class="ml-2">
+                <span class="inline-block w-4 h-4 border-2 rounded-full animate-spin border-primary border-t-transparent"></span>
+              </span>
+            </Button>
             <div v-else class="flex justify-center">
               <div class="w-8 h-8 border-4 rounded-full animate-spin border-primary border-t-transparent"></div>
             </div>
@@ -196,6 +229,7 @@ const { loggedIn, clear } = useUserSession()
 const {
   releases,
   loading,
+  backgroundLoading,
   error,
   reposProcessed,
   rateLimitRemaining,
@@ -224,7 +258,7 @@ const isLoadMoreVisible = useElementVisibility(loadMoreTrigger)
 watchDebounced(
   isLoadMoreVisible,
   (visible) => {
-    if (visible && !loading.value && hasMoreReleases.value) {
+    if (visible && !loading.value && !backgroundLoading.value && hasMoreReleases.value) {
       page.value++
     }
   },
@@ -233,7 +267,7 @@ watchDebounced(
 
 // Force refresh releases
 const handleRefresh = useDebounceFn(async () => {
-  if (loading.value) return
+  if (loading.value || backgroundLoading.value) return
   try {
     page.value = 1 // Reset to first page
     await clearCache() // Clear the cache first
@@ -271,6 +305,16 @@ useHead({
     }
   ]
 })
+
+// Computed property for loading state display
+const loadingState = computed(() => {
+  if (loading.value) return 'Loading releases...'
+  if (backgroundLoading.value) return 'Loading more releases...'
+  return 'Refresh releases'
+})
+
+// Computed property for loading animation
+const isLoadingAny = computed(() => loading.value || backgroundLoading.value)
 </script>
 
 <style>
