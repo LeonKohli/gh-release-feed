@@ -6,10 +6,36 @@
       <header class="sticky top-0 z-10 py-4 sm:py-6 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div class="flex flex-col gap-4">
           <!-- Top Bar -->
-          <div class="flex items-center justify-between">
+          <div class="flex items-center justify-between gap-4">
             <div class="flex items-center gap-3">
               <Icon name="lucide:rss" class="w-6 h-6 text-primary" />
               <h1 class="text-xl font-bold sm:text-2xl">Release Feed</h1>
+            </div>
+
+            <!-- Search Filter -->
+            <div class="relative flex-1 max-w-md">
+              <div class="relative flex items-center">
+                <Icon 
+                  name="lucide:search" 
+                  class="absolute w-4 h-4 pointer-events-none left-3 text-muted-foreground" 
+                />
+                <Input
+                  v-model="searchQuery"
+                  type="search"
+                  placeholder="Search releases..."
+                  class="pr-9 pl-9 focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none"
+                />
+                <Button
+                  v-if="searchQuery"
+                  variant="ghost"
+                  size="sm"
+                  class="absolute p-0 right-1 h-7 w-7 hover:bg-transparent"
+                  @click="searchQuery = ''"
+                  title="Clear search"
+                >
+                  <Icon name="lucide:x" class="w-4 h-4" />
+                </Button>
+              </div>
             </div>
 
             <AuthState v-slot="{ loggedIn, clear, session }">
@@ -241,13 +267,31 @@ const {
 
 const page = ref(1)
 const perPage = useStorage('release-feed-page-size', 20)
+const searchQuery = ref('')
+
+const filteredReleases = computed(() => {
+  if (!searchQuery.value) return releases.value
+
+  const query = searchQuery.value.toLowerCase()
+  return releases.value?.filter(release => {
+    const repoName = release.repo.name?.toLowerCase() || ''
+    const releaseName = release.name?.toLowerCase() || release.tagName?.toLowerCase() || ''
+    
+    return repoName.includes(query) || releaseName.includes(query)
+  })
+})
 
 const visibleReleases = computed(() => {
-  return releases.value?.slice(0, page.value * (perPage.value || 20)) || []
+  return filteredReleases.value?.slice(0, page.value * (perPage.value || 20)) || []
 })
 
 const hasMoreReleases = computed(() => {
-  return visibleReleases.value.length < (releases.value?.length || 0)
+  return visibleReleases.value.length < (filteredReleases.value?.length || 0)
+})
+
+// Reset page when search query changes
+watch(searchQuery, () => {
+  page.value = 1
 })
 
 // Use element visibility for infinite scroll
