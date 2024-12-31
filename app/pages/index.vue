@@ -167,20 +167,22 @@
           <!-- Loading Skeleton -->
           <div 
             v-if="loading && (!visibleReleases.length || reposProcessed === 0)" 
-            class="grid w-full gap-4 sm:gap-6"
+            class="grid w-full gap-4 sm:gap-6 min-h-[calc(100vh-16rem)]"
           >
-            <Card v-for="n in 3" :key="n" class="w-full p-3 overflow-hidden sm:p-6">
-              <div class="space-y-4">
+            <Card v-for="n in 3" :key="n" class="flex-1 w-full p-3 overflow-hidden sm:p-6">
+              <div class="space-y-6">
                 <div class="flex items-center gap-3">
                   <Skeleton class="flex-shrink-0 w-8 h-8 rounded-full" />
-                  <div class="flex-1 min-w-0 space-y-2">
+                  <div class="flex-1 min-w-0 space-y-3">
                     <Skeleton class="w-1/4 h-4" />
                     <Skeleton class="w-1/3 h-3" />
                   </div>
                 </div>
-                <div class="space-y-2">
+                <div class="space-y-4">
                   <Skeleton class="w-3/4 h-5" />
                   <Skeleton class="w-1/2 h-4" />
+                  <Skeleton class="w-full h-24" />
+                  <Skeleton class="w-2/3 h-4" />
                 </div>
               </div>
             </Card>
