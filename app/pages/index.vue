@@ -2,154 +2,18 @@
 <template>
   <div class="min-h-screen bg-background">
     <div class="container max-w-full px-4 mx-auto sm:px-6 sm:max-w-screen-xl">
-      <!-- Header -->
-      <header class="sticky top-0 z-10 py-4 sm:py-6 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div class="flex flex-col gap-4">
-          <!-- Top Bar -->
-          <div class="flex items-center justify-between gap-4">
-            <div class="flex items-center gap-3">
-              <Icon name="lucide:rss" class="w-6 h-6 text-primary" />
-              <h1 class="text-xl font-bold sm:text-2xl">Release Feed</h1>
-            </div>
-
-            <!-- Search Filter -->
-            <div class="relative flex-1 max-w-md">
-              <div class="relative flex items-center">
-                <Icon 
-                  name="lucide:search" 
-                  class="absolute w-4 h-4 pointer-events-none left-3 text-muted-foreground" 
-                />
-                <Input
-                  v-model="searchQuery"
-                  type="search"
-                  placeholder="Search releases..."
-                  class="pr-9 pl-9 focus-visible:ring-0 focus-visible:ring-offset-0 focus:outline-none"
-                />
-                <Button
-                  v-if="searchQuery"
-                  variant="ghost"
-                  size="sm"
-                  class="absolute p-0 right-1 h-7 w-7 hover:bg-transparent"
-                  @click="searchQuery = ''"
-                  title="Clear search"
-                >
-                  <Icon name="lucide:x" class="w-4 h-4" />
-                </Button>
-              </div>
-            </div>
-
-            <AuthState v-slot="{ loggedIn, clear, session }">
-              <div v-if="loggedIn" class="flex items-center gap-3">
-                <ClientOnly>
-                  <template #default>
-                    <DropdownMenu v-if="isLoadingAny">
-                      <DropdownMenuTrigger class="relative">
-                        <Button 
-                          variant="ghost" 
-                          size="icon"
-                          class="relative opacity-50"
-                          :title="loadingState"
-                        >
-                          <Icon 
-                            name="lucide:refresh-cw" 
-                            class="w-5 h-5 text-muted-foreground" 
-                            :class="{ 'animate-spin': isLoadingAny }" 
-                          />
-                          <span class="absolute -top-1 -right-1">
-                            <span class="relative flex w-2 h-2">
-                              <span class="absolute inline-flex w-full h-full rounded-full opacity-75 animate-ping bg-primary"></span>
-                              <span class="relative inline-flex w-2 h-2 rounded-full bg-primary"></span>
-                            </span>
-                          </span>
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" class="w-64">
-                        <DropdownMenuLabel>Loading Status</DropdownMenuLabel>
-                        <DropdownMenuSeparator />
-                        <div class="px-2 py-1.5 text-sm">
-                          <div class="space-y-2">
-                            <div class="flex items-center justify-between gap-4">
-                              <span class="text-muted-foreground">Repositories Found:</span>
-                              <span class="font-medium">{{ reposProcessed }}</span>
-                            </div>
-                            <div class="flex items-center justify-between gap-4">
-                              <span class="text-muted-foreground">Current Batch:</span>
-                              <span class="font-medium">{{ Math.floor(reposProcessed / 5) + 1 }}</span>
-                            </div>
-                            <div class="flex items-center justify-between gap-4">
-                              <span class="text-muted-foreground">API Calls Left:</span>
-                              <span class="font-medium">{{ rateLimitRemaining }}</span>
-                            </div>
-                            <div v-if="retries > 0" class="flex items-center justify-between gap-4 text-yellow-500">
-                              <span>Retries:</span>
-                              <span class="font-medium">{{ retries }}</span>
-                            </div>
-                            <div v-if="rateLimitResetAt" class="flex items-center justify-between gap-4">
-                              <span class="text-muted-foreground">Rate Limit Resets:</span>
-                              <span class="font-medium">{{ formatResetTime }}</span>
-                            </div>
-                            <div class="pt-1 text-xs text-muted-foreground">
-                              Processing repositories in parallel...
-                            </div>
-                          </div>
-                        </div>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                    <Button 
-                      v-else
-                      variant="ghost" 
-                      size="icon"
-                      class="relative"
-                      @click="handleRefresh"
-                      :disabled="isLoadingAny"
-                      :title="loadingState"
-                    >
-                      <Icon 
-                        name="lucide:refresh-cw" 
-                        class="w-5 h-5" 
-                      />
-                    </Button>
-                  </template>
-                  <template #fallback>
-                    <div class="w-9 h-9"></div>
-                  </template>
-                </ClientOnly>
-
-                <DropdownMenu>
-                  <DropdownMenuTrigger class="flex items-center gap-2 outline-none">
-                    <Avatar class="w-8 h-8 transition-transform hover:scale-105">
-                      <AvatarImage
-                        v-if="session?.user?.avatarUrl"
-                        :src="session.user.avatarUrl"
-                        :alt="session.user.name || 'User avatar'"
-                      />
-                      <AvatarFallback v-else>
-                        {{ (session?.user?.name || 'User')[0]?.toUpperCase() }}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div class="hidden text-sm sm:block">
-                      <span class="font-medium">{{ session?.user?.name }}</span>
-                    </div>
-                    <Icon name="lucide:chevron-down" class="w-4 h-4 text-muted-foreground" />
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" class="w-48">
-                    <DropdownMenuLabel>Account</DropdownMenuLabel>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem @click="handleLogout">
-                      <Icon name="lucide:log-out" class="w-4 h-4 mr-2" />
-                      <span>Logout</span>
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-              <Button v-else @click="navigateTo('/login')" class="gap-2">
-                <Icon name="lucide:log-in" class="w-4 h-4" />
-                Login with GitHub
-              </Button>
-            </AuthState>
-          </div>
-        </div>
-      </header>
+      <AppNavbar
+        v-model:searchQuery="searchQuery"
+        :isSearching="isSearching"
+        :isLoadingAny="isLoadingAny"
+        :loadingState="loadingState"
+        :reposProcessed="reposProcessed"
+        :rateLimitRemaining="rateLimitRemaining"
+        :rateLimitResetAt="rateLimitResetAt"
+        :retries="retries"
+        @refresh="handleRefresh"
+        @logout="handleLogout"
+      />
 
       <!-- Main Content -->
       <main class="pb-8">
@@ -205,12 +69,6 @@
                 <ReleaseCard v-for="release in visibleReleases" :key="release.id" :release="release" class="w-full" />
               </div>
             </template>
-            <div 
-              v-else-if="!isLoadingAny && reposProcessed > 0" 
-              class="py-8 text-center text-muted-foreground"
-            >
-              No releases found in the last 3 months
-            </div>
           </div>
 
           <div v-if="hasMoreReleases" ref="loadMoreTrigger" class="py-6 text-center sm:py-8">
@@ -236,7 +94,8 @@
 </template>
 
 <script setup lang="ts">
-import { useStorage, useElementVisibility, useTimeAgo } from '@vueuse/core'
+import { useStorage, useElementVisibility, useTimeAgo, useMediaQuery, useDebounceFn } from '@vueuse/core'
+import type { Ref } from 'vue'
 
 const { loggedIn, clear } = useUserSession()
 const {
@@ -255,21 +114,47 @@ const {
 const page = ref(1)
 const perPage = useStorage('release-feed-page-size', 20)
 const searchQuery = ref('')
+const debouncedSearchQuery = ref('')
+const isSearching = ref(false)
+
+// Debounced search handler
+const updateDebouncedSearch = useDebounceFn((value: string) => {
+  isSearching.value = true
+  debouncedSearchQuery.value = value
+  // Small delay to show loading state
+  setTimeout(() => {
+    isSearching.value = false
+  }, 300)
+}, 300)
+
+// Watch for search query changes
+watch(searchQuery, (newValue) => {
+  isSearching.value = true
+  updateDebouncedSearch(newValue)
+})
 
 const filteredReleases = computed(() => {
-  if (!searchQuery.value) return releases.value
+  if (!debouncedSearchQuery.value) return releases.value
 
-  const query = searchQuery.value.toLowerCase()
+  const query = debouncedSearchQuery.value.toLowerCase()
   return releases.value?.filter(release => {
     const repoName = release.repo.name?.toLowerCase() || ''
-    const releaseName = release.name?.toLowerCase() || release.tagName?.toLowerCase() || ''
+    const ownerName = release.repo.owner.login?.toLowerCase() || ''
+    const releaseName = release.name?.toLowerCase() || ''
+    const tagName = release.tagName?.toLowerCase() || ''
+    const description = release.descriptionHTML?.toLowerCase() || ''
     
-    return repoName.includes(query) || releaseName.includes(query)
+    return repoName.includes(query) || 
+           ownerName.includes(query) ||
+           releaseName.includes(query) ||
+           tagName.includes(query) ||
+           description.includes(query)
   })
 })
 
 const visibleReleases = computed(() => {
-  return filteredReleases.value?.slice(0, page.value * (perPage.value || 20)) || []
+  if (!filteredReleases.value) return []
+  return filteredReleases.value.slice(0, page.value * perPage.value)
 })
 
 const hasMoreReleases = computed(() => {
@@ -346,6 +231,17 @@ const loadingState = computed(() => {
 
 // Computed property for loading animation
 const isLoadingAny = computed(() => loading.value || backgroundLoading.value)
+
+// Mobile search visibility state
+const isSearchVisible = ref<boolean>(false)
+const isMobile = useMediaQuery('(max-width: 640px)') as Ref<boolean>
+
+// Reset search visibility when switching between mobile and desktop
+watch(isMobile, (mobile) => {
+  if (!mobile) {
+    isSearchVisible.value = false
+  }
+})
 </script>
 
 <style>
