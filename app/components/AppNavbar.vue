@@ -15,6 +15,7 @@
           <div class="flex items-center gap-2">
             <!-- Search Bar (Desktop) -->
             <div 
+              v-if="loggedIn"
               class="relative hidden w-64 sm:flex xl:w-80"
             >
               <div class="relative flex items-center w-full">
