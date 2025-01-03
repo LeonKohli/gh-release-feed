@@ -32,4 +32,15 @@ export default defineNuxtConfig({
       }
     }
   },
+  app: {
+    head: {
+      script: process.env.NODE_ENV === 'production' ? [
+        {
+          src: 'https://um.web.leonkohli.de/script.js',
+          defer: true,
+          'data-website-id': '09e0d0fa-3476-43e7-ba6c-16b3d636d76d'
+        }
+      ] : []
+    }
+  }
 })
