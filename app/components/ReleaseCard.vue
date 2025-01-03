@@ -1,10 +1,13 @@
 <!-- components/releases/ReleaseCard.vue -->
 <template>
-  <Card class="w-full p-3 overflow-hidden transition-all duration-200 sm:p-6 release-card group/card hover:shadow-lg">
+  <Card 
+    class="w-full p-3 overflow-hidden transition-all duration-200 sm:p-6 release-card group/card hover:shadow-lg"
+    @click="handleCardClick"
+  >
     <div class="flex flex-col gap-3 sm:gap-4">
       <!-- Header -->
       <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div class="flex items-start gap-3 min-w-0">
+        <div class="flex items-start min-w-0 gap-3">
           <Avatar class="flex-shrink-0 w-8 h-8 sm:w-10 sm:h-10">
             <NuxtImg 
               :src="release.repo.owner.avatarUrl" 
@@ -16,13 +19,13 @@
             />
             <AvatarFallback class="hidden">{{ release.repo.owner.login.slice(0, 2).toUpperCase() }}</AvatarFallback>
           </Avatar>
-          <div class="min-w-0 flex-1">
+          <div class="flex-1 min-w-0">
             <div class="flex flex-wrap items-center gap-2">
               <NuxtLink :to="release.repo.owner.url" target="_blank" rel="noopener noreferrer" class="truncate text-foreground hover:text-foreground/90 hover:underline">
                 {{ release.repo.owner.login }}
               </NuxtLink>
               <span class="flex-shrink-0 text-muted-foreground">/</span>
-              <NuxtLink :to="release.repo.url" target="_blank" rel="noopener noreferrer" class="truncate font-medium text-foreground hover:text-foreground/90 hover:underline">
+              <NuxtLink :to="release.repo.url" target="_blank" rel="noopener noreferrer" class="font-medium truncate text-foreground hover:text-foreground/90 hover:underline">
                 {{ release.repo.name }}
               </NuxtLink>
             </div>
@@ -161,6 +164,7 @@
 <script setup lang="ts">
 import type { ReleaseObj } from '~/composables/useGithub'
 import { intlFormatDistance, format } from 'date-fns'
+import { useMediaQuery } from '@vueuse/core'
 
 interface Language {
   id: string
@@ -179,6 +183,8 @@ const emit = defineEmits<{
 
 const isContentExpanded = ref(false)
 const hasExpandableContent = ref(false)
+
+const isMobile = useMediaQuery('(max-width: 640px)')
 
 // Memoize computed properties
 const formattedDate = computed(() => {
@@ -254,6 +260,26 @@ const hiddenLanguagesCount = computed(() => {
 function onContentExpandChange(expanded: boolean) {
   hasExpandableContent.value = true
   isContentExpanded.value = expanded
+}
+
+// Handle card click for mobile devices
+function handleCardClick(event: MouseEvent) {
+  // Only handle tap on mobile
+  if (!isMobile.value) return
+  
+  // Don't trigger if clicking on a link or button
+  const target = event.target as HTMLElement
+  if (
+    target.tagName === 'A' || 
+    target.tagName === 'BUTTON' ||
+    target.closest('a') ||
+    target.closest('button')
+  ) return
+
+  // Toggle content if expandable
+  if (hasExpandableContent.value) {
+    isContentExpanded.value = !isContentExpanded.value
+  }
 }
 </script>
 

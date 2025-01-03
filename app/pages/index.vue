@@ -42,19 +42,18 @@
               <div v-if="loggedIn" class="flex items-center gap-3">
                 <ClientOnly>
                   <template #default>
-                    <DropdownMenu v-if="loading">
+                    <DropdownMenu v-if="isLoadingAny">
                       <DropdownMenuTrigger class="relative">
                         <Button 
                           variant="ghost" 
                           size="icon"
-                          :disabled="loading"
-                          class="relative"
-                          :title="loading ? 'Loading details...' : 'Refresh releases'"
+                          class="relative opacity-50"
+                          :title="loadingState"
                         >
                           <Icon 
                             name="lucide:refresh-cw" 
-                            class="w-5 h-5" 
-                            :class="{ 'animate-spin': loading }" 
+                            class="w-5 h-5 text-muted-foreground" 
+                            :class="{ 'animate-spin': isLoadingAny }" 
                           />
                           <span class="absolute -top-1 -right-1">
                             <span class="relative flex w-2 h-2">
@@ -108,20 +107,7 @@
                       <Icon 
                         name="lucide:refresh-cw" 
                         class="w-5 h-5" 
-                        :class="{ 'animate-spin': isLoadingAny }" 
                       />
-                      <span class="absolute -top-1 -right-1">
-                        <span class="relative flex w-2 h-2">
-                          <span 
-                            v-if="isLoadingAny"
-                            class="absolute inline-flex w-full h-full rounded-full opacity-75 animate-ping bg-primary"
-                          ></span>
-                          <span 
-                            v-if="isLoadingAny"
-                            class="relative inline-flex w-2 h-2 rounded-full bg-primary"
-                          ></span>
-                        </span>
-                      </span>
                     </Button>
                   </template>
                   <template #fallback>
@@ -193,25 +179,26 @@
           <!-- Loading Skeleton -->
           <div 
             v-if="loading && (!visibleReleases.length || reposProcessed === 0)" 
-            class="grid w-full gap-4 sm:gap-6"
+            class="grid w-full gap-4 sm:gap-6 min-h-[calc(100vh-16rem)]"
           >
-            <Card v-for="n in 3" :key="n" class="w-full p-3 overflow-hidden sm:p-6">
-              <div class="space-y-4 animate-pulse">
+            <Card v-for="n in 3" :key="n" class="flex-1 w-full p-3 overflow-hidden sm:p-6">
+              <div class="space-y-6">
                 <div class="flex items-center gap-3">
-                  <div class="flex-shrink-0 w-8 h-8 rounded-full bg-muted"></div>
-                  <div class="flex-1 min-w-0 space-y-2">
-                    <div class="w-1/4 h-4 rounded bg-muted"></div>
-                    <div class="w-1/3 h-3 rounded bg-muted"></div>
+                  <Skeleton class="flex-shrink-0 w-8 h-8 rounded-full" />
+                  <div class="flex-1 min-w-0 space-y-3">
+                    <Skeleton class="w-1/4 h-4" />
+                    <Skeleton class="w-1/3 h-3" />
                   </div>
                 </div>
-                <div class="space-y-2">
-                  <div class="w-3/4 h-5 rounded bg-muted"></div>
-                  <div class="w-1/2 h-4 rounded bg-muted"></div>
+                <div class="space-y-4">
+                  <Skeleton class="w-3/4 h-5" />
+                  <Skeleton class="w-1/2 h-4" />
+                  <Skeleton class="w-full h-24" />
+                  <Skeleton class="w-2/3 h-4" />
                 </div>
               </div>
             </Card>
           </div>
-
           <div v-else class="grid w-full gap-4 sm:gap-6">
             <template v-if="visibleReleases.length > 0">
               <div class="grid w-full gap-4 sm:gap-6">
