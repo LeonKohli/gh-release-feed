@@ -16,19 +16,18 @@
               <div v-if="loggedIn" class="flex items-center gap-3">
                 <ClientOnly>
                   <template #default>
-                    <DropdownMenu v-if="loading">
+                    <DropdownMenu v-if="isLoadingAny">
                       <DropdownMenuTrigger class="relative">
                         <Button 
                           variant="ghost" 
                           size="icon"
-                          :disabled="loading"
-                          class="relative"
-                          :title="loading ? 'Loading details...' : 'Refresh releases'"
+                          class="relative opacity-50"
+                          :title="loadingState"
                         >
                           <Icon 
                             name="lucide:refresh-cw" 
-                            class="w-5 h-5" 
-                            :class="{ 'animate-spin': loading }" 
+                            class="w-5 h-5 text-muted-foreground" 
+                            :class="{ 'animate-spin': isLoadingAny }" 
                           />
                           <span class="absolute -top-1 -right-1">
                             <span class="relative flex w-2 h-2">
@@ -82,20 +81,7 @@
                       <Icon 
                         name="lucide:refresh-cw" 
                         class="w-5 h-5" 
-                        :class="{ 'animate-spin': isLoadingAny }" 
                       />
-                      <span class="absolute -top-1 -right-1">
-                        <span class="relative flex w-2 h-2">
-                          <span 
-                            v-if="isLoadingAny"
-                            class="absolute inline-flex w-full h-full rounded-full opacity-75 animate-ping bg-primary"
-                          ></span>
-                          <span 
-                            v-if="isLoadingAny"
-                            class="relative inline-flex w-2 h-2 rounded-full bg-primary"
-                          ></span>
-                        </span>
-                      </span>
                     </Button>
                   </template>
                   <template #fallback>
@@ -187,7 +173,6 @@
               </div>
             </Card>
           </div>
-
           <div v-else class="grid w-full gap-4 sm:gap-6">
             <template v-if="visibleReleases.length > 0">
               <div class="grid w-full gap-4 sm:gap-6">
