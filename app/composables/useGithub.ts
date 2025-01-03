@@ -348,7 +348,7 @@ export const useGithub = () => {
               }
               stargazerCount
               releases(
-                first: 25, 
+                first: 10, 
                 orderBy: {field: CREATED_AT, direction: DESC}
               ) {
                 edges {
