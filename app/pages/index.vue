@@ -42,7 +42,7 @@
 
           <!-- Loading Skeleton -->
           <div 
-            v-if="loading && (!visibleReleases.length || reposProcessed === 0)" 
+            v-if="loading && (!visibleReleaseGroups.length || reposProcessed === 0)" 
             class="grid w-full gap-4 sm:gap-6 min-h-[calc(100vh-16rem)]"
           >
             <Card v-for="n in 3" :key="n" class="flex-1 w-full p-3 overflow-hidden sm:p-6">
@@ -64,9 +64,14 @@
             </Card>
           </div>
           <div v-else class="grid w-full gap-4 sm:gap-6">
-            <template v-if="visibleReleases.length > 0">
+            <template v-if="visibleReleaseGroups.length > 0">
               <div class="grid w-full gap-4 sm:gap-6">
-                <ReleaseCard v-for="release in visibleReleases" :key="release.id" :release="release" class="w-full" />
+                <ReleaseCard 
+                  v-for="group in visibleReleaseGroups" 
+                  :key="group.id" 
+                  :releases="group.releases"
+                  class="w-full" 
+                />
               </div>
             </template>
           </div>
@@ -96,6 +101,7 @@
 <script setup lang="ts">
 import { useStorage, useElementVisibility, useTimeAgo, useMediaQuery, useDebounceFn } from '@vueuse/core'
 import type { Ref } from 'vue'
+import type { ReleaseGroup } from '~/composables/useReleaseGroups'
 
 const { loggedIn, clear } = useUserSession()
 const {
@@ -110,6 +116,8 @@ const {
   fetchReleases,
   clearCache
 } = useGithub()
+
+const { groupReleases } = useReleaseGroups()
 
 const page = ref(1)
 const perPage = useStorage('release-feed-page-size', 20)
@@ -152,13 +160,19 @@ const filteredReleases = computed(() => {
   })
 })
 
-const visibleReleases = computed(() => {
+// Group releases
+const releaseGroups = computed(() => {
   if (!filteredReleases.value) return []
-  return filteredReleases.value.slice(0, page.value * perPage.value)
+  return groupReleases(filteredReleases.value)
+})
+
+const visibleReleaseGroups = computed(() => {
+  if (!releaseGroups.value) return []
+  return releaseGroups.value.slice(0, page.value * perPage.value)
 })
 
 const hasMoreReleases = computed(() => {
-  return visibleReleases.value.length < (filteredReleases.value?.length || 0)
+  return visibleReleaseGroups.value.length < (releaseGroups.value?.length || 0)
 })
 
 // Reset page when search query changes
