@@ -172,7 +172,7 @@
                       v-if="release.descriptionHTML" 
                       :html="sanitizeDescription(release.descriptionHTML)"
                       v-model:isExpanded="expandedStates[release.id]"
-                      @update:isExpanded="(expanded) => onContentExpandChange(release.id, expanded)"
+                      @update:isExpanded="(expanded: boolean) => onContentExpandChange(release.id, expanded)"
                       class="max-w-full"
                     />
                   </div>
