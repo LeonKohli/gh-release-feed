@@ -137,36 +137,6 @@ interface GraphQLResponse {
     }
 }
 
-interface RepoDetailsResponse {
-    repository: {
-        description: string
-        languages: {
-            totalCount: number
-            edges: Array<{
-                node: {
-                    id: string
-                    name: string
-                }
-            }>
-        }
-        licenseInfo: {
-            spdxId: string
-        } | null
-        primaryLanguage: {
-            id: string
-            name: string
-        } | null
-    }
-}
-
-interface DescriptionResponse {
-    nodes: Array<{
-        id: string
-        descriptionHTML: string
-        updatedAt: string
-    }>
-}
-
 interface GithubReleasesDBSchema {
     descriptions: {
         key: string
@@ -776,15 +746,4 @@ export const useGithub = () => {
         clearCache: async () => await store.clearCache(),
         cleanup: async () => await store.cleanup()
     }
-}
-
-// Near the top with other interfaces
-interface GithubError extends Error {
-    response?: {
-        errors?: Array<{
-            type: string
-            message: string
-        }>
-    }
-    name: string
 }
