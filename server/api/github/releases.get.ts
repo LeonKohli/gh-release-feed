@@ -1,4 +1,5 @@
 import { Octokit } from '@octokit/core'
+import { throttling } from '@octokit/plugin-throttling'
 
 interface GraphQLResponse {
   viewer: {
@@ -119,40 +120,57 @@ export default defineEventHandler(async (event) => {
 
   const query = getQuery(event)
   const cursor = typeof query.cursor === 'string' ? query.cursor : null
-  const requestedPageSize = Number(query.pageSize ?? 20)
+  const requestedPageSize = Number(query.pageSize ?? 100)
   const pageSize = Math.min(Math.max(1, requestedPageSize), 100)
 
-  const octokit = new Octokit({
+  const ThrottledOctokit = Octokit.plugin(throttling)
+  const octokit = new ThrottledOctokit({
     auth: session.user.accessToken,
-    request: { timeout: 45_000 }
+    userAgent: 'gh-release-feed',
+    request: { timeout: 45_000 },
+    throttle: {
+      onRateLimit: (retryAfter: number, options: any, octokitInstance: any) => {
+        octokitInstance.log.warn(`Request quota exhausted for request ${options.method} ${options.url}`)
+        if (options.request?.retryCount === 0) {
+          // only retries once
+          octokitInstance.log.info(`Retrying after ${retryAfter} seconds!`)
+          return true
+        }
+      },
+      onSecondaryRateLimit: (retryAfter: number, options: any, octokitInstance: any) => {
+        octokitInstance.log.warn(`SecondaryRateLimit detected for request ${options.method} ${options.url}`)
+        if (options.request?.retryCount === 0) {
+          // only retries once
+          octokitInstance.log.info(`Retrying after ${retryAfter} seconds!`)
+          return true
+        }
+      }
+    }
   })
 
   const cacheKey = `${session.user.id}:${cursor ?? ''}:${pageSize}`
   const now = Date.now()
   const cached = cache.get(cacheKey)
   if (cached && cached.expiresAt > now) {
-    setResponseHeader(event, 'Cache-Control', 'private, max-age=20')
+    setResponseHeader(event, 'Cache-Control', 'private, max-age=60')
     return cached.data
   }
 
   // Basic exponential backoff for transient errors
   const maxRetries = 3
-  let delay = 800
+  let delay = 200
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       // Optional API version header for stability
-      const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), 50_000)
       const data = await octokit.graphql<GraphQLResponse>(RECENT_RELEASES_QUERY, {
         cursor,
         pageSize,
         headers: { 'X-GitHub-Api-Version': '2022-11-28' },
-        request: { signal: controller.signal }
+        // request timeout is configured on the client; no manual AbortController
       })
-      clearTimeout(timer)
-      // Cache for a very short time to reduce bursts (private per user via cookies)
-      setResponseHeader(event, 'Cache-Control', 'private, max-age=20')
-      cache.set(cacheKey, { data, expiresAt: Date.now() + 20_000 })
+      // Cache for a moderate time to reduce bursts (private per user via cookies)
+      setResponseHeader(event, 'Cache-Control', 'private, max-age=60')
+      cache.set(cacheKey, { data, expiresAt: Date.now() + 60_000 })
       return data
     } catch (err: any) {
       const status = err?.status || err?.response?.status

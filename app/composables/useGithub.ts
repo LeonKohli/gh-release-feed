@@ -4,8 +4,8 @@ import { openDB, type IDBPDatabase } from 'idb'
 
 
 const BATCH_SIZES = {
-    API_FETCH: 50,      // Number of repositories to fetch per API call
-    PROCESSING: 5,      // Number of repositories to process in parallel
+    API_FETCH: 100,     // Number of repositories to fetch per API call
+    PROCESSING: 10,     // Number of repositories to process in parallel
     RELEASE_FETCH: 10   // Number of releases to fetch per repository
 } as const
 
@@ -245,7 +245,7 @@ export const useGithubStore = defineStore('github', {
         backgroundLoading: false,
         error: null as string | null,
         lastFetchTimestamp: null as number | null,
-        pageSize: 20,
+        pageSize: 100,
         db: null as IDBPDatabase<GithubReleasesDBSchema> | null,
         reposProcessed: 0,
         retries: 0,

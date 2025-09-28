@@ -15,6 +15,7 @@
     "@nuxt/image": "1.11.0",
     "@nuxtjs/color-mode": "3.5.2",
     "@octokit/core": "^7.0.4",
+    "@octokit/plugin-throttling": "^11.0.1",
     "@pinia/nuxt": "0.11.2",
     "@tailwindcss/vite": "^4.1.13",
     "@vueuse/core": "^13.9.0",
