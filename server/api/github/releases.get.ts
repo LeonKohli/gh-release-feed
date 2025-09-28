@@ -1,5 +1,6 @@
 import { Octokit } from '@octokit/core'
 import { throttling } from '@octokit/plugin-throttling'
+import { useStorage } from 'nitropack/runtime/internal/storage'
 
 interface GraphQLResponse {
   viewer: {
@@ -20,112 +21,88 @@ interface GraphQLResponse {
     used: number
   }
 }
+type CacheEntry = { data: GraphQLResponse; expiresAt: number }
 
-const RELEASE_FIELDS = `
-  fragment ReleaseFields on Release {
-    id
-    isDraft
-    isPrerelease
-    name
-    tagName
-    publishedAt
-    updatedAt
-    url
-    descriptionHTML
-  }
-`
+// In-flight coalescing map to dedupe concurrent identical fetches per user/cursor/page
+const inflight: Map<string, Promise<GraphQLResponse>> = (globalThis as any).__ghReleasesInflight || new Map()
+;(globalThis as any).__ghReleasesInflight = inflight
 
-const REPOSITORY_FIELDS = `
-  fragment RepositoryFields on Repository {
-    name
-    url
-    description
-    primaryLanguage {
+function buildQuery (opts: { includeDescriptionHTML: boolean, releasesCount: number }) {
+  const releaseFields = `
+    fragment ReleaseFields on Release {
+      id
+      isDraft
+      isPrerelease
+      name
+      tagName
+      publishedAt
+      updatedAt
+      url
+      ${opts.includeDescriptionHTML ? 'descriptionHTML' : ''}
+    }
+  `
+
+  const repositoryFields = `
+    fragment RepositoryFields on Repository {
       id
       name
-    }
-    owner {
-      login
-      avatarUrl
       url
-    }
-    stargazerCount
-    languages(first: 5, orderBy: {field: SIZE, direction: DESC}) {
-      totalCount
-      edges {
-        node {
-          id
-          name
-        }
+      description
+      primaryLanguage { id name }
+      owner { login avatarUrl url }
+      stargazerCount
+      languages(first: 5, orderBy: {field: SIZE, direction: DESC}) {
+        totalCount
+        edges { node { id name } }
+      }
+      licenseInfo { spdxId }
+      releases(first: ${opts.releasesCount}) {
+        totalCount
+        pageInfo { hasNextPage endCursor }
+        edges { node { ...ReleaseFields } }
       }
     }
-    licenseInfo {
-      spdxId
-    }
-    releases(first: 10) {
-      totalCount
-      pageInfo {
-        hasNextPage
-        endCursor
-      }
-      edges {
-        node {
-          ...ReleaseFields
-        }
-      }
-    }
-  }
-`
+  `
 
-const RECENT_RELEASES_QUERY = `
-  ${RELEASE_FIELDS}
-  ${REPOSITORY_FIELDS}
-  query($cursor: String, $pageSize: Int!) {
-    viewer {
-      starredRepositories(
-        first: $pageSize,
-        after: $cursor,
-        orderBy: {field: STARRED_AT, direction: DESC}
-      ) {
-        pageInfo {
-          endCursor
-          hasNextPage
-        }
-        edges {
-          node {
-            ...RepositoryFields
-          }
+  return `
+    ${releaseFields}
+    ${repositoryFields}
+    query($cursor: String, $pageSize: Int!) {
+      viewer {
+        starredRepositories(
+          first: $pageSize,
+          after: $cursor,
+          orderBy: {field: STARRED_AT, direction: DESC}
+        ) {
+          pageInfo { endCursor hasNextPage }
+          edges { node { ...RepositoryFields } }
         }
       }
+      rateLimit { cost limit remaining resetAt used }
     }
-    rateLimit {
-      cost
-      limit
-      remaining
-      resetAt
-      used
-    }
-  }
-`
-
-type CacheEntry = { data: GraphQLResponse; expiresAt: number }
-const cache: Map<string, CacheEntry> = (globalThis as any).__ghProxyCache || new Map<string, CacheEntry>()
-;(globalThis as any).__ghProxyCache = cache
+  `
+}
 
 export default defineEventHandler(async (event) => {
   const session = await getUserSession(event)
   if (!session?.user?.accessToken) {
     throw createError({ statusCode: 401, statusMessage: 'Not authenticated' })
   }
+  const user = session.user!
+  const accessToken = session.user.accessToken!
 
   const query = getQuery(event)
-  const cursor = typeof query.cursor === 'string' ? query.cursor : null
-  const requestedPageSize = Number(query.pageSize ?? 100)
+  const rawCursor = typeof query.cursor === 'string' ? query.cursor : null
+  const cursorKey = rawCursor ? encodeURIComponent(rawCursor) : 'root'
+  const cursor = rawCursor
+  const requestedPageSize = Number(query.pageSize ?? 60)
   const pageSize = Math.min(Math.max(1, requestedPageSize), 100)
+  const withDetails = String(query.withDetails ?? 'false') === 'true'
+  const releasesCount = Math.min(Math.max(1, Number(process.env.GITHUB_RELEASES_PER_REPO ?? '3')), 10)
 
   const ThrottledOctokit = Octokit.plugin(throttling)
   const octokit = new ThrottledOctokit({
-    auth: session.user.accessToken,
+    auth: accessToken,
     userAgent: 'gh-release-feed',
     request: { timeout: 45_000 },
     throttle: {
@@ -148,12 +125,37 @@ export default defineEventHandler(async (event) => {
     }
   })
 
-  const cacheKey = `${session.user.id}:${cursor ?? ''}:${pageSize}`
+  const storage = useStorage('cache')
+  const ttlSeconds = Number(process.env.GITHUB_CACHE_TTL ?? '300')
+  const detailVariant = `${withDetails ? 'full' : 'light'}-${releasesCount}`
+  const cacheKey = `gh:releases:${user.id}:${cursorKey}:${pageSize}:${detailVariant}`
   const now = Date.now()
-  const cached = cache.get(cacheKey)
+  const cached = await storage.getItem<CacheEntry>(cacheKey)
   if (cached && cached.expiresAt > now) {
-    setResponseHeader(event, 'Cache-Control', 'private, max-age=60')
+    setResponseHeader(event, 'X-Cache-Status', 'HIT')
+    setResponseHeader(event, 'Cache-Control', `private, max-age=${ttlSeconds}, stale-while-revalidate=60`)
+    if (cached.data?.rateLimit) {
+      setResponseHeader(event, 'X-GH-RateLimit-Remaining', String(cached.data.rateLimit.remaining))
+      setResponseHeader(event, 'X-GH-RateLimit-Cost', String(cached.data.rateLimit.cost))
+      setResponseHeader(event, 'X-GH-RateLimit-ResetAt', String(cached.data.rateLimit.resetAt))
+    }
+    console.info(`[gh][releases] cache HIT u=${user.id} cursor=${cursor ?? ''} pageSize=${pageSize} details=${withDetails} ttl=${ttlSeconds}`)
     return cached.data
+  }
+
+  // Coalesce in-flight identical requests
+  const existing = inflight.get(cacheKey)
+  if (existing) {
+    setResponseHeader(event, 'X-Cache-Status', 'COALESCE')
+    setResponseHeader(event, 'Cache-Control', `private, max-age=${ttlSeconds}, stale-while-revalidate=60`)
+    console.info(`[gh][releases] inflight COALESCE u=${user.id} cursor=${cursor ?? ''} pageSize=${pageSize} details=${withDetails}`)
+    const data = await existing
+    if (data?.rateLimit) {
+      setResponseHeader(event, 'X-GH-RateLimit-Remaining', String(data.rateLimit.remaining))
+      setResponseHeader(event, 'X-GH-RateLimit-Cost', String(data.rateLimit.cost))
+      setResponseHeader(event, 'X-GH-RateLimit-ResetAt', String(data.rateLimit.resetAt))
+    }
+    return data
   }
 
   // Basic exponential backoff for transient errors
@@ -162,16 +164,34 @@ export default defineEventHandler(async (event) => {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       // Optional API version header for stability
-      const data = await octokit.graphql<GraphQLResponse>(RECENT_RELEASES_QUERY, {
-        cursor,
-        pageSize,
-        headers: { 'X-GitHub-Api-Version': '2022-11-28' },
-        // request timeout is configured on the client; no manual AbortController
-      })
-      // Cache for a moderate time to reduce bursts (private per user via cookies)
-      setResponseHeader(event, 'Cache-Control', 'private, max-age=60')
-      cache.set(cacheKey, { data, expiresAt: Date.now() + 60_000 })
-      return data
+      const queryStr = buildQuery({ includeDescriptionHTML: withDetails, releasesCount })
+      console.info(`[gh][releases] cache MISS → fetching u=${user.id} cursor=${cursor ?? ''} pageSize=${pageSize} details=${withDetails}`)
+      const promise = (async () => {
+        const data = await octokit.graphql<GraphQLResponse>(queryStr, {
+          cursor,
+          pageSize,
+          headers: { 'X-GitHub-Api-Version': '2022-11-28' },
+          // request timeout is configured on the client; no manual AbortController
+        })
+        await storage.setItem(cacheKey, { data, expiresAt: Date.now() + ttlSeconds * 1000 }, { ttl: ttlSeconds })
+        return data
+      })()
+      inflight.set(cacheKey, promise)
+      try {
+        const data = await promise
+        // Cache for a moderate time to reduce bursts (private per user via cookies)
+        setResponseHeader(event, 'X-Cache-Status', 'MISS')
+        setResponseHeader(event, 'Cache-Control', `private, max-age=${ttlSeconds}, stale-while-revalidate=60`)
+        if (data?.rateLimit) {
+          setResponseHeader(event, 'X-GH-RateLimit-Remaining', String(data.rateLimit.remaining))
+          setResponseHeader(event, 'X-GH-RateLimit-Cost', String(data.rateLimit.cost))
+          setResponseHeader(event, 'X-GH-RateLimit-ResetAt', String(data.rateLimit.resetAt))
+          console.info(`[gh][releases] rateLimit cost=${data.rateLimit.cost} remaining=${data.rateLimit.remaining} resetAt=${data.rateLimit.resetAt}`)
+        }
+        return data
+      } finally {
+        inflight.delete(cacheKey)
+      }
     } catch (err: any) {
       const status = err?.status || err?.response?.status
       const message = err?.message || 'GitHub API error'

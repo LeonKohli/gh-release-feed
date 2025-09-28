@@ -10,6 +10,7 @@ const BATCH_SIZES = {
 } as const
 
 interface RepositoryNode {
+    id: string
     name: string
     url: string
     description: string | null
@@ -79,6 +80,17 @@ interface GraphQLResponse {
     }
 }
 
+interface RepoReleasesResponse {
+    repository: RepositoryNode | null
+    rateLimit: {
+        cost: number
+        limit: number
+        remaining: number
+        resetAt: string
+        used: number
+    }
+}
+
 interface GithubReleasesDBSchema {
     descriptions: {
         key: string
@@ -102,6 +114,8 @@ interface GithubReleasesDBSchema {
 const STALE_THRESHOLD = 5 * 60 * 1000 // 5 minutes in ms
 const METADATA_KEY = 'github-releases-metadata'
 const MAX_RETRIES = 3
+const ADDITIONAL_RELEASE_BATCH_SIZE = 3
+const MAX_ADDITIONAL_BATCHES_PER_REPO = 2
 
 // Helper types for release processing
 interface ReleaseProcessingOptions {
@@ -147,6 +161,7 @@ const releaseProcessingHelpers = {
             isPrerelease: release.isPrerelease,
             descriptionHTML: release.descriptionHTML || '',
             repo: {
+                id: repo.id,
                 name: repo.name,
                 url: repo.url,
                 description: repo.description || '',
@@ -245,7 +260,7 @@ export const useGithubStore = defineStore('github', {
         backgroundLoading: false,
         error: null as string | null,
         lastFetchTimestamp: null as number | null,
-        pageSize: 100,
+        pageSize: 60,
         db: null as IDBPDatabase<GithubReleasesDBSchema> | null,
         reposProcessed: 0,
         retries: 0,
@@ -254,6 +269,10 @@ export const useGithubStore = defineStore('github', {
         rateLimitResetAt: null as string | null,
         cachedEtag: null as string | null,
         cursor: null as string | null,
+        additionalReleaseCursors: {} as Record<string, string | null>,
+        additionalFetchQueue: [] as string[],
+        additionalFetchCounts: {} as Record<string, number>,
+        additionalFetchInProgress: false,
     }),
 
     actions: {
@@ -272,6 +291,10 @@ export const useGithubStore = defineStore('github', {
             this.reposProcessed = 0
             this.retries = 0
             this.rateLimitCost = 0
+            this.additionalReleaseCursors = {}
+            this.additionalFetchQueue = []
+            this.additionalFetchCounts = {}
+            this.additionalFetchInProgress = false
         },
 
         async initDB() {
@@ -374,6 +397,10 @@ export const useGithubStore = defineStore('github', {
                 this.lastFetchTimestamp = null
                 this.cachedEtag = null
                 this.releases = []
+                this.additionalReleaseCursors = {}
+                this.additionalFetchQueue = []
+                this.additionalFetchCounts = {}
+                this.additionalFetchInProgress = false
             } catch (error) {
                 console.error('Error clearing cache:', error)
             }
@@ -435,6 +462,7 @@ export interface ReleaseObj {
     isPrerelease: boolean
     isDraft: boolean
     repo: {
+        id: string
         name: string
         url: string
         stargazerCount: number
@@ -469,6 +497,177 @@ export const useGithub = () => {
 
 
     // Query execution moved server-side to avoid CORS and improve reliability
+
+    // Debounced batched details fetcher (client-only)
+    const pendingDetailIds = new Set<string>()
+    let detailsDebounceTimer: ReturnType<typeof setTimeout> | null = null
+    let detailsInFlight = false
+
+    const flushDetailsBatch = async () => {
+        if (process.server) return
+        if (detailsInFlight) return
+        const ids = Array.from(pendingDetailIds).slice(0, 50)
+        if (ids.length === 0) return
+        ids.forEach(id => pendingDetailIds.delete(id))
+        detailsInFlight = true
+        try {
+            const result = await fetchWithRetry(async () =>
+                $fetch<{ items: Array<{ id: string; descriptionHTML: string }> }>(
+                    '/api/github/release-details',
+                    { method: 'POST', body: { ids } }
+                )
+            )
+            const items = result?.items || []
+            if (items.length && store.db) {
+                for (const it of items) {
+                    const idx = store.releases.findIndex(r => r.id === it.id)
+                    if (idx !== -1) {
+                        const rel = store.releases[idx]
+                        if (!rel) continue
+                        if (!rel.descriptionHTML) {
+                            rel.descriptionHTML = it.descriptionHTML || ''
+                            const descriptionKey = `${rel.id}-${rel.publishedAt}`
+                            await store.db.put('descriptions', rel.descriptionHTML, descriptionKey)
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            console.error('Failed to populate release descriptions (batch)', e)
+        } finally {
+            detailsInFlight = false
+            // If there are more pending IDs accumulated during flight, schedule another flush soon
+            if (pendingDetailIds.size > 0) {
+                scheduleDetailsFlush(50)
+            }
+        }
+    }
+
+    const scheduleDetailsFlush = (delayMs = 150) => {
+        if (detailsDebounceTimer) return
+        detailsDebounceTimer = setTimeout(() => {
+            detailsDebounceTimer = null
+            // flush up to 50 per batch; further ones will reschedule automatically
+            void flushDetailsBatch()
+        }, delayMs)
+    }
+
+    const populateDescriptionsForMissing = async (limit = 20) => {
+        if (process.server) return
+        const missing = store.releases
+            .filter(r => !r.descriptionHTML || r.descriptionHTML.length === 0)
+            .slice(0, limit)
+        if (missing.length === 0) return
+        for (const m of missing) {
+            pendingDetailIds.add(m.id)
+        }
+        scheduleDetailsFlush(150)
+    }
+
+    const scheduleRepoAdditionalFetch = (repoId: string, cursor: string | null) => {
+        if (!repoId) return
+        const count = store.additionalFetchCounts[repoId] || 0
+        if (count >= MAX_ADDITIONAL_BATCHES_PER_REPO) {
+            store.additionalReleaseCursors[repoId] = null
+            return
+        }
+        const validCursor = cursor && cursor.length > 4 ? cursor : null
+        store.additionalReleaseCursors[repoId] = validCursor
+        if (!validCursor) return
+        if (!store.additionalFetchQueue.includes(repoId)) {
+            store.additionalFetchQueue.push(repoId)
+            void processAdditionalQueue()
+        }
+    }
+
+    const processAdditionalQueue = async () => {
+        if (process.server) return
+        if (store.additionalFetchInProgress) return
+        store.additionalFetchInProgress = true
+        try {
+            while (store.additionalFetchQueue.length) {
+                const repoId = store.additionalFetchQueue.shift()
+                if (!repoId) continue
+                const cursor = store.additionalReleaseCursors[repoId]
+                if (!cursor || cursor.length <= 4) {
+                    store.additionalReleaseCursors[repoId] = null
+                    continue
+                }
+                const count = store.additionalFetchCounts[repoId] || 0
+                if (count >= MAX_ADDITIONAL_BATCHES_PER_REPO) {
+                    store.additionalReleaseCursors[repoId] = null
+                    continue
+                }
+                try {
+                    const response = await fetchWithRetry(async () =>
+                        $fetch<RepoReleasesResponse>('/api/github/repo-releases', {
+                            method: 'POST',
+                            body: {
+                                repoId,
+                                cursor,
+                                limit: ADDITIONAL_RELEASE_BATCH_SIZE,
+                                withDetails: false
+                            }
+                        })
+                    )
+                    const repoNode = response?.repository
+                    if (!repoNode?.releases?.edges?.length) {
+                        store.additionalReleaseCursors[repoId] = null
+                        continue
+                    }
+
+                    const existingReleases = new Map(store.releases.map(r => [r.id, r]))
+                    const processedNodes = new WeakMap<RepositoryNode, boolean>()
+                    const batchOutcome = await releaseProcessingHelpers.processResponseBatch(
+                        [{ node: repoNode }],
+                        {
+                            startDate: startingDate,
+                            db: store.db,
+                            existingReleases,
+                            processedNodes
+                        }
+                    )
+                    store.releases = releaseProcessingHelpers.sortReleases(
+                        Array.from(existingReleases.values())
+                    )
+
+                    const addedCount = batchOutcome.newCount
+                    if (addedCount === 0) {
+                        store.additionalReleaseCursors[repoId] = null
+                        continue
+                    }
+
+                    store.additionalFetchCounts[repoId] = count + 1
+
+                    const nextCursor = repoNode.releases?.pageInfo?.hasNextPage
+                        ? repoNode.releases.pageInfo.endCursor ?? null
+                        : null
+                    if (!nextCursor || nextCursor === cursor) {
+                        store.additionalReleaseCursors[repoId] = null
+                    } else {
+                        store.additionalReleaseCursors[repoId] = nextCursor
+                    }
+
+                    if (response.rateLimit) {
+                        store.updateRateLimit(response.rateLimit)
+                    }
+
+                    if (
+                        nextCursor &&
+                        nextCursor !== cursor &&
+                        store.additionalReleaseCursors[repoId] &&
+                        store.additionalFetchCounts[repoId] < MAX_ADDITIONAL_BATCHES_PER_REPO
+                    ) {
+                        store.additionalFetchQueue.push(repoId)
+                    }
+                } catch (error) {
+                    console.error('Failed to fetch additional repo releases', error)
+                }
+            }
+        } finally {
+            store.additionalFetchInProgress = false
+        }
+    }
 
     const fetchWithRetry = async <T>(fn: () => Promise<T>, retries = 3, delay = 1000): Promise<T> => {
         try {
@@ -529,6 +728,22 @@ export const useGithub = () => {
         }
 
         // Update metadata after successful fetch
+        const seenRepos = new Set<string>()
+        for (const edge of edges) {
+            const repo = edge?.node
+            if (!repo?.id) continue
+            if (seenRepos.has(repo.id)) continue
+            seenRepos.add(repo.id)
+            const nextCursor = repo.releases?.pageInfo?.hasNextPage
+                ? repo.releases.pageInfo.endCursor ?? null
+                : null
+            if (repo.releases?.pageInfo?.hasNextPage && nextCursor) {
+                scheduleRepoAdditionalFetch(repo.id, nextCursor)
+            } else {
+                store.additionalReleaseCursors[repo.id] = null
+            }
+        }
+
         await store.updateMetadata()
 
         // Check rate limit and cost information
@@ -541,6 +756,13 @@ export const useGithub = () => {
                 `Resets in ${resetIn} minutes at ${resetDate.toLocaleTimeString()}`
             ))
             return // setError already resets loading states
+        }
+
+        // Opportunistically start fetching missing descriptions for top items
+        if (!process.server) {
+            // fire-and-forget to avoid blocking pagination
+            // eslint-disable-next-line @typescript-eslint/no-floating-promises
+            populateDescriptionsForMissing(20)
         }
 
         // Only continue fetching if we're finding new releases
@@ -605,7 +827,8 @@ export const useGithub = () => {
                 $fetch<GraphQLResponse>('/api/github/releases', {
                     params: {
                         cursor,
-                        pageSize: store.pageSize
+                        pageSize: store.pageSize,
+                        withDetails: false
                     }
                 })
             )
