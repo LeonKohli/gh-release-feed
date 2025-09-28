@@ -24,8 +24,9 @@ export default defineOAuthGitHubEventHandler({
       loggedInAt: new Date()
     })
 
+    // Avoid logging sensitive session data like access tokens
     const session = await getUserSession(event)
-    console.log('GitHub OAuth success - session:', session)
+    console.log('GitHub OAuth success for user:', session?.user?.id)
     return sendRedirect(event, '/')
   },
   onError(event, error) {

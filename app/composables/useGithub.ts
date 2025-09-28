@@ -1,71 +1,13 @@
 // composables/useGithub.ts
-import { Octokit } from '@octokit/core'
 import { defineStore } from 'pinia'
 import { openDB, type IDBPDatabase } from 'idb'
 
-
-// Define fragment for reusable fields
-const RELEASE_FIELDS = `
-  fragment ReleaseFields on Release {
-    id
-    isDraft
-    isPrerelease
-    name
-    tagName
-    publishedAt
-    updatedAt
-    url
-    descriptionHTML
-  }
-`
 
 const BATCH_SIZES = {
     API_FETCH: 50,      // Number of repositories to fetch per API call
     PROCESSING: 5,      // Number of repositories to process in parallel
     RELEASE_FETCH: 10   // Number of releases to fetch per repository
 } as const
-
-const REPOSITORY_FIELDS = `
-  fragment RepositoryFields on Repository {
-    name
-    url
-    description
-    primaryLanguage {
-      id
-      name
-    }
-    owner {
-      login
-      avatarUrl
-      url
-    }
-    stargazerCount
-    languages(first: 5, orderBy: {field: SIZE, direction: DESC}) {
-      totalCount
-      edges {
-        node {
-          id
-          name
-        }
-      }
-    }
-    licenseInfo {
-      spdxId
-    }
-    releases(first: ${BATCH_SIZES.RELEASE_FETCH}) {
-      totalCount
-      pageInfo {
-        hasNextPage
-        endCursor
-      }
-      edges {
-        node {
-          ...ReleaseFields
-        }
-      }
-    }
-  }
-`
 
 interface RepositoryNode {
     name: string
@@ -525,47 +467,8 @@ export const useGithub = () => {
     const startingDate = new Date()
     startingDate.setMonth(startingDate.getMonth() - 3)
 
-    const octokit = computed(() => {
-        if (!loggedIn.value || !session.value?.user?.accessToken) {
 
-            return null
-        }
-        
-        return new Octokit({ 
-            auth: session.value.user.accessToken,
-            retry: { enabled: true, retries: 3 },
-            throttle: { enabled: true, minimumSecondsBetweenCalls: 1 }
-        })
-    })
-
-    const recentReleasesQuery = `
-    ${RELEASE_FIELDS}
-    ${REPOSITORY_FIELDS}
-    query($cursor: String, $pageSize: Int!) {
-      viewer {
-        starredRepositories(
-          first: $pageSize, 
-          after: $cursor, 
-          orderBy: {field: STARRED_AT, direction: DESC}
-        ) {
-          pageInfo {
-            endCursor
-            hasNextPage
-          }
-          edges {
-            node {
-              ...RepositoryFields
-            }
-          }
-        }
-      }
-      rateLimit {
-        cost
-        remaining
-        resetAt
-      }
-    }
-  `
+    // Query execution moved server-side to avoid CORS and improve reliability
 
     const fetchWithRetry = async <T>(fn: () => Promise<T>, retries = 3, delay = 1000): Promise<T> => {
         try {
@@ -651,7 +554,7 @@ export const useGithub = () => {
     }
 
     const fetchReleases = async (cursor: string | null = null) => {
-        if (!octokit.value) {
+        if (!loggedIn.value) {
             console.error('GitHub auth failed:', {
                 loggedIn: loggedIn.value,
                 hasSession: !!session.value,
@@ -698,10 +601,12 @@ export const useGithub = () => {
                 store.backgroundLoading = true
             }
 
-            const response = await fetchWithRetry(async () => 
-                octokit.value!.graphql<GraphQLResponse>(recentReleasesQuery, { 
-                    cursor,
-                    pageSize: store.pageSize
+            const response = await fetchWithRetry(async () =>
+                $fetch<GraphQLResponse>('/api/github/releases', {
+                    params: {
+                        cursor,
+                        pageSize: store.pageSize
+                    }
                 })
             )
 
