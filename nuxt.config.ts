@@ -1,3 +1,5 @@
+import tailwindcss from '@tailwindcss/vite'
+
 // https://nuxt.com/docs/api/configuration/nuxt-config
 export default defineNuxtConfig({
   future: {
@@ -7,22 +9,21 @@ export default defineNuxtConfig({
   devtools: { enabled: true },
   modules: [
     '@pinia/nuxt',
-    '@nuxtjs/tailwindcss',
-    'shadcn-nuxt',
     '@nuxt/icon',
     'nuxt-auth-utils',
     '@nuxt/image',
     '@vueuse/nuxt',
     '@nuxtjs/color-mode',
+    'shadcn-nuxt',
   ],
+  css: ['~/assets/css/tailwind.css'],
   colorMode: {
     classPrefix: '',
     classSuffix: ''
   },
-
   shadcn: {
     prefix: '',
-    componentDir: './app/components/ui'
+    componentDir: '~/components/ui'
   },
   runtimeConfig: {
     oauth: {
@@ -42,5 +43,10 @@ export default defineNuxtConfig({
         }
       ] : []
     }
-  }
+  },
+  vite: {
+    plugins: [
+      tailwindcss(),
+    ],
+  },
 })

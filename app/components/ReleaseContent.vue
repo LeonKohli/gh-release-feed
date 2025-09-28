@@ -113,7 +113,9 @@ const shouldShowGradient = computed(() => {
 <style scoped>
 /* Base content styles */
 .release-content {
-  @apply text-sm text-foreground leading-relaxed;
+  font-size: 0.875rem;
+  line-height: 1.625;
+  color: var(--color-foreground);
 }
 
 .release-content.with-gradient {
@@ -140,60 +142,83 @@ const shouldShowGradient = computed(() => {
 .release-content :deep(h4),
 .release-content :deep(h5),
 .release-content :deep(h6) {
-  @apply font-semibold text-foreground mt-6 first:mt-0 mb-3;
+  font-weight: 600;
+  color: var(--color-foreground);
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
 }
 
-.release-content :deep(h1) { @apply text-xl; }
-.release-content :deep(h2) { @apply text-lg border-b border-border/60 pb-2; }
-.release-content :deep(h3) { @apply text-base; }
-.release-content :deep(h4) { @apply text-sm; }
+.release-content :deep(h1:first-child),
+.release-content :deep(h2:first-child),
+.release-content :deep(h3:first-child),
+.release-content :deep(h4:first-child),
+.release-content :deep(h5:first-child),
+.release-content :deep(h6:first-child) {
+  margin-top: 0;
+}
+
+.release-content :deep(h1) { font-size: 1.25rem; }
+.release-content :deep(h2) {
+  font-size: 1.125rem;
+  border-bottom: 1px solid rgb(from var(--color-border) r g b / 0.6);
+  padding-bottom: 0.5rem;
+}
+.release-content :deep(h3) { font-size: 1rem; }
+.release-content :deep(h4) { font-size: 0.875rem; }
 
 /* Lists */
 .release-content :deep(ul),
 .release-content :deep(ol) {
-  @apply my-3;
+  margin-top: 0.75rem;
+  margin-bottom: 0.75rem;
 }
 
 .release-content :deep(ul ul),
 .release-content :deep(ol ol),
 .release-content :deep(ul ol),
 .release-content :deep(ol ul) {
-  @apply mt-1.5 mb-0 ml-3;
+  margin-top: 0.375rem;
+  margin-bottom: 0;
+  margin-left: 0.75rem;
 }
 
 /* List items */
 .release-content :deep(li) {
-  @apply leading-normal;
+  line-height: 1.5;
 }
 
 .release-content :deep(li > div) {
-  @apply leading-relaxed;
+  line-height: 1.625;
 }
 
 .release-content :deep(li + li) {
-  @apply mt-1.5;
+  margin-top: 0.375rem;
 }
 
 /* List item bullets */
 .release-content :deep(li[data-depth="1"] > span) {
-  @apply text-[14px] text-foreground/90;
+  font-size: 14px;
+  color: rgb(from var(--color-foreground) r g b / 0.9);
   content: "›";
 }
 
 .release-content :deep(li[data-depth="2"] > span) {
-  @apply text-[12px] text-foreground/80;
+  font-size: 12px;
+  color: rgb(from var(--color-foreground) r g b / 0.8);
   content: "›";
 }
 
 /* Paragraphs and text content */
 .release-content :deep(p) {
-  @apply my-3 text-foreground/90;
+  margin-top: 0.75rem;
+  margin-bottom: 0.75rem;
+  color: rgb(from var(--color-foreground) r g b / 0.9);
 }
 
 .release-content :deep(p),
 .release-content :deep(li),
 .release-content :deep(td) {
-  @apply break-words;
+  word-break: break-word;
   word-wrap: break-word;
   overflow-wrap: break-word;
   hyphens: auto;
@@ -201,70 +226,159 @@ const shouldShowGradient = computed(() => {
 
 /* Code blocks */
 .release-content :deep(pre) {
-  @apply bg-muted/30 p-3 rounded-md border border-border/60 my-3 overflow-x-auto text-[13px] leading-relaxed max-w-full;
+  background-color: rgb(from var(--color-muted) r g b / 0.3);
+  padding: 0.75rem;
+  border-radius: 0.375rem;
+  border: 1px solid rgb(from var(--color-border) r g b / 0.6);
+  margin-top: 0.75rem;
+  margin-bottom: 0.75rem;
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.625;
+  max-width: 100%;
 }
 
 .release-content :deep(pre code) {
-  @apply whitespace-pre-wrap break-all sm:break-normal;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+@media (min-width: 640px) {
+  .release-content :deep(pre code) {
+    word-break: normal;
+  }
 }
 
 .release-content :deep(code:not(pre code)) {
-  @apply bg-muted/30 px-1.5 py-0.5 rounded text-[13px] font-mono border border-border/40 text-foreground/90 break-all sm:break-normal;
+  background-color: rgb(from var(--color-muted) r g b / 0.3);
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  font-size: 13px;
+  font-family: monospace;
+  border: 1px solid rgb(from var(--color-border) r g b / 0.4);
+  color: rgb(from var(--color-foreground) r g b / 0.9);
+  word-break: break-all;
+}
+
+@media (min-width: 640px) {
+  .release-content :deep(code:not(pre code)) {
+    word-break: normal;
+  }
 }
 
 /* Links */
 .release-content :deep(a:not(.commit-link)) {
-  @apply text-primary hover:text-primary/90 hover:underline font-medium;
+  color: var(--color-primary);
+  font-weight: 500;
+}
+
+.release-content :deep(a:not(.commit-link)):hover {
+  color: rgb(from var(--color-primary) r g b / 0.9);
+  text-decoration: underline;
 }
 
 .release-content :deep(.commit-link) {
-  @apply inline-flex items-center gap-1.5 text-xs font-mono bg-muted/30 hover:bg-primary/5 px-1.5 py-0.5 rounded-md no-underline border border-border/40 hover:border-primary/20 hover:text-primary transition-colors break-all sm:break-normal;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.75rem;
+  font-family: monospace;
+  background-color: rgb(from var(--color-muted) r g b / 0.3);
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.375rem;
+  text-decoration: none;
+  border: 1px solid rgb(from var(--color-border) r g b / 0.4);
+  transition: background-color 150ms, border-color 150ms, color 150ms;
+  word-break: break-all;
+}
+
+.release-content :deep(.commit-link):hover {
+  background-color: rgb(from var(--color-primary) r g b / 0.05);
+  border-color: rgb(from var(--color-primary) r g b / 0.2);
+  color: var(--color-primary);
+}
+
+@media (min-width: 640px) {
+  .release-content :deep(.commit-link) {
+    word-break: normal;
+  }
 }
 
 /* Tables */
 .release-content :deep(table) {
-  @apply w-full border-collapse my-3 block overflow-x-auto sm:table;
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0.75rem;
+  margin-bottom: 0.75rem;
+  display: block;
+  overflow-x: auto;
   max-width: calc(100vw - 2rem);
 }
 
+@media (min-width: 640px) {
+  .release-content :deep(table) {
+    display: table;
+  }
+}
+
 .release-content :deep(th) {
-  @apply bg-muted/30 px-3 py-2 border border-border/60 text-left font-semibold;
+  background-color: rgb(from var(--color-muted) r g b / 0.3);
+  padding: 0.5rem 0.75rem;
+  border: 1px solid rgb(from var(--color-border) r g b / 0.6);
+  text-align: left;
+  font-weight: 600;
 }
 
 .release-content :deep(td) {
-  @apply px-3 py-2 border border-border/60;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid rgb(from var(--color-border) r g b / 0.6);
 }
 
 /* Other elements */
 .release-content :deep(blockquote) {
-  @apply border-l-4 border-muted/60 bg-muted/10 p-3 my-3 italic text-muted-foreground;
+  border-left: 4px solid rgb(from var(--color-muted) r g b / 0.6);
+  background-color: rgb(from var(--color-muted) r g b / 0.1);
+  padding: 0.75rem;
+  margin-top: 0.75rem;
+  margin-bottom: 0.75rem;
+  font-style: italic;
+  color: var(--color-muted-foreground);
 }
 
 .release-content :deep(img) {
-  @apply rounded-lg border border-border/60 my-3;
+  border-radius: 0.5rem;
+  border: 1px solid rgb(from var(--color-border) r g b / 0.6);
+  margin-top: 0.75rem;
+  margin-bottom: 0.75rem;
   max-width: 100%;
   height: auto;
 }
 
 /* Task lists */
 .release-content :deep(.task-list-item) {
-  @apply flex items-center gap-2;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .release-content :deep(.task-list-item input[type="checkbox"]) {
-  @apply h-3.5 w-3.5 rounded border-border text-primary focus:ring-primary;
+  height: 0.875rem;
+  width: 0.875rem;
+  border-radius: 0.25rem;
+  border-color: var(--color-border);
+  accent-color: var(--color-primary);
 }
 
 /* Nested content spacing */
 .release-content :deep(li > p:first-child),
-.release-content :deep(li > div > p:first-child) { @apply mt-0; }
+.release-content :deep(li > div > p:first-child) { margin-top: 0; }
 
 .release-content :deep(li > p:last-child),
-.release-content :deep(li > div > p:last-child) { @apply mb-0; }
+.release-content :deep(li > div > p:last-child) { margin-bottom: 0; }
 
 .release-content :deep(li > div > ul:first-child),
-.release-content :deep(li > div > ol:first-child) { @apply mt-1.5; }
+.release-content :deep(li > div > ol:first-child) { margin-top: 0.375rem; }
 
 .release-content :deep(li > div > ul:last-child),
-.release-content :deep(li > div > ol:last-child) { @apply mb-0; }
+.release-content :deep(li > div > ol:last-child) { margin-bottom: 0; }
 </style> 
