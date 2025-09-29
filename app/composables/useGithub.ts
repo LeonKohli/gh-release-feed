@@ -834,10 +834,6 @@ export const useGithub = () => {
                 })
             )
 
-            if (!response?.viewer?.starredRepositories) {
-                throw new Error('Invalid response format from GitHub API')
-            }
-
             await processResponse(response, cursor)
 
         } catch (error: any) {
