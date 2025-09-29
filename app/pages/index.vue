@@ -103,7 +103,7 @@ import { useStorage, useElementVisibility, useTimeAgo, useMediaQuery, useDebounc
 import type { Ref } from 'vue'
 import type { ReleaseGroup } from '~/composables/useReleaseGroups'
 
-const { loggedIn, clear } = useUserSession()
+const { loggedIn, clear, ready } = useUserSession()
 const {
   releases,
   loading,
@@ -213,9 +213,9 @@ const formatResetTime = computed(() => {
   return useTimeAgo(new Date(rateLimitResetAt.value)).value
 })
 
-// Initial data loading
+// Initial data loading - wait for session to be ready before fetching
 watchEffect(async () => {
-  if (loggedIn.value) {
+  if (ready.value && loggedIn.value) {
     await fetchReleases()
   }
 })
