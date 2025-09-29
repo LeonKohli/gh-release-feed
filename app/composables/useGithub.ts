@@ -682,7 +682,8 @@ export const useGithub = () => {
 
     const processResponse = async (response: GraphQLResponse, cursor: string | null) => {
         if (!response?.viewer?.starredRepositories) {
-            throw new Error('Invalid response format from GitHub API')
+            console.error('Invalid GitHub API response:', response)
+            throw new Error('Invalid response from GitHub API. Please try again.')
         }
 
         const { edges, pageInfo } = response.viewer.starredRepositories
@@ -846,6 +847,14 @@ export const useGithub = () => {
                 await fetchSession()
                 if (!loggedIn.value) {
                     store.setError(new Error('Session expired. Please login again.'))
+                }
+            } else if (error.statusCode === 502 || error.message?.includes('502')) {
+                console.error('GitHub API temporarily unavailable (502):', error)
+                store.setError(new Error('GitHub API is temporarily unavailable. Retrying...'))
+                // Retry after a short delay for 502 errors
+                await new Promise(resolve => setTimeout(resolve, 2000))
+                if (store.retries < 3) {
+                    await fetchReleases(cursor)
                 }
             } else {
                 console.error('Error fetching GitHub releases:', error)

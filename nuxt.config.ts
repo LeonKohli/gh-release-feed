@@ -16,6 +16,9 @@ export default defineNuxtConfig({
     '@nuxtjs/color-mode',
     'shadcn-nuxt',
   ],
+  auth: {
+    loadStrategy: 'client-only'
+  },
   css: ['~/assets/css/tailwind.css'],
   colorMode: {
     classPrefix: '',
