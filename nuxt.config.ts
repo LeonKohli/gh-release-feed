@@ -5,7 +5,10 @@ export default defineNuxtConfig({
   future: {
     compatibilityVersion: 4
   },
-  compatibilityDate: '2024-11-01',
+  compatibilityDate: '2025-10-11',
+  nitro: {
+    preset: 'bun',
+  },
   devtools: { enabled: true },
   modules: [
     '@pinia/nuxt',
