@@ -20,6 +20,57 @@ yarn install
 bun install
 ```
 
+## Environment Configuration
+
+This app requires GitHub OAuth credentials for authentication. Follow these steps to set up:
+
+### Step 1: Create a GitHub OAuth App
+
+1. Go to [GitHub Developer Settings](https://github.com/settings/developers)
+2. Click **"New OAuth App"**
+3. Fill in the following:
+   - **Application name**: e.g., "GH Release Feed"
+   - **Homepage URL**: `http://localhost:3000` (for local dev) or your production URL
+   - **Authorization callback URL**: `http://localhost:3000/api/auth/github` (for local dev) or `https://yourdomain.com/api/auth/github` (for production)
+4. Click **"Register application"**
+5. Copy the **Client ID** and generate a **Client Secret** (click "Generate a new client secret")
+
+### Step 2: Create `.env.local` File
+
+Create a `.env.local` file in the project root with the following variables:
+
+```bash
+# GitHub OAuth Configuration
+GITHUB_CLIENT_ID=your_github_oauth_app_client_id
+GITHUB_CLIENT_SECRET=your_github_oauth_app_client_secret
+
+# Session encryption password (generate a random 32+ character string)
+NUXT_SESSION_PASSWORD=your_random_32_character_session_password
+
+# Application URL (must match GitHub OAuth callback URL)
+APP_URL=http://localhost:3000
+```
+
+### Step 3: Generate Session Password
+
+Generate a secure session password using:
+
+```bash
+openssl rand -base64 32
+```
+
+Copy the output and use it as your `NUXT_SESSION_PASSWORD` value.
+
+### Important Notes
+
+- The callback URL must match: `{APP_URL}/api/auth/github`
+- For local development: `http://localhost:3000/api/auth/github`
+- For production: `https://yourdomain.com/api/auth/github`
+- The app requests read-only scopes: `read:user`, `user:email`, `read:org`
+- Never commit `.env.local` — it's in `.gitignore`
+
+After setting these variables, restart your dev server for the changes to take effect.
+
 ## Development Server
 
 Start the development server on `http://localhost:3000`:
