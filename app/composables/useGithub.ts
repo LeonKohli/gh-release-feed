@@ -844,14 +844,14 @@ export const useGithub = () => {
                 if (!loggedIn.value) {
                     store.setError(new Error('Session expired. Please login again.'))
                 }
-            } else if (error.statusCode === 502 || error.message?.includes('502')) {
-                console.error('GitHub API temporarily unavailable (502):', error)
-                store.setError(new Error('GitHub API is temporarily unavailable. Retrying...'))
-                // Retry after a short delay for 502 errors
-                await new Promise(resolve => setTimeout(resolve, 2000))
-                if (store.retries < 3) {
-                    await fetchReleases(cursor)
-                }
+            } else if (error.statusCode === 502 || error.message?.includes('502') || error.message?.includes('temporarily unavailable')) {
+                // 502 errors are already retried by fetchWithRetry and server-side retry plugin
+                // Don't recursively call fetchReleases - that creates a retry storm
+                console.error('GitHub API temporarily unavailable after all retries:', error)
+                store.setError(new Error('GitHub API is temporarily unavailable. Please try again later.'))
+            } else if (error.statusCode === 429 || error.message?.includes('rate limit')) {
+                console.error('GitHub API rate limit exceeded:', error)
+                store.setError(new Error(error.statusMessage || 'GitHub API rate limit exceeded. Please try again later.'))
             } else {
                 console.error('Error fetching GitHub releases:', error)
                 store.setError(error)

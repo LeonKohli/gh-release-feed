@@ -1,5 +1,6 @@
 import { Octokit } from '@octokit/core'
 import { throttling } from '@octokit/plugin-throttling'
+import { retry } from '@octokit/plugin-retry'
 import { useStorage } from 'nitropack/runtime/internal/storage'
 
 interface RepositoryReleasesResponse {
@@ -85,11 +86,18 @@ export default defineEventHandler(async (event) => {
     return cached.data
   }
 
-  const ThrottledOctokit = Octokit.plugin(throttling)
-  const octokit = new ThrottledOctokit({
+  const OctokitWithPlugins = Octokit.plugin(throttling, retry)
+  const octokit = new OctokitWithPlugins({
     auth: accessToken,
     userAgent: 'gh-release-feed',
-    request: { timeout: 45_000 },
+    request: {
+      timeout: 45_000,
+      retries: 3,
+      retryAfter: 5
+    },
+    retry: {
+      doNotRetry: [400, 401, 403, 404, 422]
+    },
     throttle: {
       onRateLimit: (retryAfter: number, options: any, octokitInstance: any) => {
         octokitInstance.log.warn(`Request quota exhausted for request ${options.method} ${options.url}`)
@@ -144,67 +152,51 @@ export default defineEventHandler(async (event) => {
     }
   `
 
-  const maxRetries = 3
-  let delay = 200
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      console.info(`[gh][repo] cache MISS → fetching u=${user.id} repo=${repoId} cursor=${cursor ?? ''} limit=${limit} details=${withDetails}`)
-      const data = await octokit.graphql<RepositoryReleasesResponse>(query, {
-        repoId,
-        first: limit,
-        cursor,
-        headers: { 'X-GitHub-Api-Version': '2022-11-28' }
-      })
-      setResponseHeader(event, 'Cache-Control', `private, max-age=${ttlSeconds}, stale-while-revalidate=60`)
-      setResponseHeader(event, 'X-Cache-Status', 'MISS')
-      if (data?.rateLimit) {
-        setResponseHeader(event, 'X-GH-RateLimit-Remaining', String(data.rateLimit.remaining))
-        setResponseHeader(event, 'X-GH-RateLimit-Cost', String(data.rateLimit.cost))
-        setResponseHeader(event, 'X-GH-RateLimit-ResetAt', String(data.rateLimit.resetAt))
-        console.info(`[gh][repo] rateLimit cost=${data.rateLimit.cost} remaining=${data.rateLimit.remaining} resetAt=${data.rateLimit.resetAt}`)
-      }
-      await storage.setItem(cacheKey, { data, expiresAt: Date.now() + ttlSeconds * 1000 }, { ttl: ttlSeconds })
-      return data
-    } catch (err: any) {
-      const status = err?.status || err?.response?.status
-      const message = err?.message || 'GitHub API error'
-
-      if (['ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN'].includes(err?.code)) {
-        if (attempt < maxRetries) {
-          await new Promise((r) => setTimeout(r, delay))
-          delay *= 2
-          continue
-        }
-        throw createError({ statusCode: 503, statusMessage: 'Network error contacting GitHub' })
-      }
-
-      if (status === 401 || /bad credentials/i.test(message)) {
-        throw createError({ statusCode: 401, statusMessage: 'Bad credentials' })
-      }
-
-      if (status === 403 && (/rate limit/i.test(message) || /secondary rate/i.test(message))) {
-        const reset = err?.headers?.['x-ratelimit-reset'] || err?.response?.headers?.['x-ratelimit-reset']
-        let statusMessage = 'GitHub API rate limit exceeded.'
-        if (reset) {
-          const resetDate = new Date(parseInt(reset) * 1000)
-          statusMessage += ` Resets at ${resetDate.toLocaleTimeString()}.`
-        }
-        throw createError({ statusCode: 429, statusMessage })
-      }
-
-      if ((status === 429 || /rate limit/i.test(message)) && attempt < maxRetries) {
-        await new Promise((r) => setTimeout(r, delay))
-        delay *= 2
-        continue
-      }
-
-      if ([500, 502, 503, 504].includes(status) && attempt < maxRetries) {
-        await new Promise((r) => setTimeout(r, delay))
-        delay *= 2
-        continue
-      }
-
-      throw createError({ statusCode: status || 500, statusMessage: message })
+  // The retry plugin handles 5xx errors automatically
+  try {
+    console.info(`[gh][repo] cache MISS → fetching u=${user.id} repo=${repoId} cursor=${cursor ?? ''} limit=${limit} details=${withDetails}`)
+    const data = await octokit.graphql<RepositoryReleasesResponse>(query, {
+      repoId,
+      first: limit,
+      cursor,
+      headers: { 'X-GitHub-Api-Version': '2022-11-28' }
+    })
+    setResponseHeader(event, 'Cache-Control', `private, max-age=${ttlSeconds}, stale-while-revalidate=60`)
+    setResponseHeader(event, 'X-Cache-Status', 'MISS')
+    if (data?.rateLimit) {
+      setResponseHeader(event, 'X-GH-RateLimit-Remaining', String(data.rateLimit.remaining))
+      setResponseHeader(event, 'X-GH-RateLimit-Cost', String(data.rateLimit.cost))
+      setResponseHeader(event, 'X-GH-RateLimit-ResetAt', String(data.rateLimit.resetAt))
+      console.info(`[gh][repo] rateLimit cost=${data.rateLimit.cost} remaining=${data.rateLimit.remaining} resetAt=${data.rateLimit.resetAt}`)
     }
+    await storage.setItem(cacheKey, { data, expiresAt: Date.now() + ttlSeconds * 1000 }, { ttl: ttlSeconds })
+    return data
+  } catch (err: any) {
+    const status = err?.status || err?.response?.status
+    const message = err?.message || 'GitHub API error'
+
+    if (['ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN'].includes(err?.code)) {
+      throw createError({ statusCode: 503, statusMessage: 'Network error contacting GitHub' })
+    }
+
+    if (status === 401 || /bad credentials/i.test(message)) {
+      throw createError({ statusCode: 401, statusMessage: 'Bad credentials' })
+    }
+
+    if (status === 403 && (/rate limit/i.test(message) || /secondary rate/i.test(message))) {
+      const reset = err?.headers?.['x-ratelimit-reset'] || err?.response?.headers?.['x-ratelimit-reset']
+      let statusMessage = 'GitHub API rate limit exceeded.'
+      if (reset) {
+        const resetDate = new Date(parseInt(reset) * 1000)
+        statusMessage += ` Resets at ${resetDate.toLocaleTimeString()}.`
+      }
+      throw createError({ statusCode: 429, statusMessage })
+    }
+
+    // For 5xx errors that exhausted retries, surface the error
+    throw createError({
+      statusCode: status || 502,
+      statusMessage: `GitHub API temporarily unavailable: ${message}`
+    })
   }
 })

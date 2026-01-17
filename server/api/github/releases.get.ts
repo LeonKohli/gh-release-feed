@@ -1,5 +1,6 @@
 import { Octokit } from '@octokit/core'
 import { throttling } from '@octokit/plugin-throttling'
+import { retry } from '@octokit/plugin-retry'
 import { useStorage } from 'nitropack/runtime/internal/storage'
 
 interface GraphQLResponse {
@@ -100,16 +101,22 @@ export default defineEventHandler(async (event) => {
   const withDetails = String(query.withDetails ?? 'false') === 'true'
   const releasesCount = Math.min(Math.max(1, Number(process.env.GITHUB_RELEASES_PER_REPO ?? '3')), 10)
 
-  const ThrottledOctokit = Octokit.plugin(throttling)
-  const octokit = new ThrottledOctokit({
+  const OctokitWithPlugins = Octokit.plugin(throttling, retry)
+  const octokit = new OctokitWithPlugins({
     auth: accessToken,
     userAgent: 'gh-release-feed',
-    request: { timeout: 45_000 },
+    request: {
+      timeout: 45_000,
+      retries: 3,        // retry plugin: 3 retries for transient errors (502, 503, etc.)
+      retryAfter: 5      // retry plugin: initial delay in seconds
+    },
+    retry: {
+      doNotRetry: [400, 401, 403, 404, 422]  // Don't retry client errors
+    },
     throttle: {
       onRateLimit: (retryAfter: number, options: any, octokitInstance: any) => {
         octokitInstance.log.warn(`Request quota exhausted for request ${options.method} ${options.url}`)
         if (options.request?.retryCount === 0) {
-          // only retries once
           octokitInstance.log.info(`Retrying after ${retryAfter} seconds!`)
           return true
         }
@@ -117,7 +124,6 @@ export default defineEventHandler(async (event) => {
       onSecondaryRateLimit: (retryAfter: number, options: any, octokitInstance: any) => {
         octokitInstance.log.warn(`SecondaryRateLimit detected for request ${options.method} ${options.url}`)
         if (options.request?.retryCount === 0) {
-          // only retries once
           octokitInstance.log.info(`Retrying after ${retryAfter} seconds!`)
           return true
         }
@@ -143,55 +149,40 @@ export default defineEventHandler(async (event) => {
     return cached.data
   }
 
-  // Coalesce in-flight identical requests
+  // Coalesce in-flight identical requests (BEFORE making a new request)
   const existing = inflight.get(cacheKey)
   if (existing) {
     setResponseHeader(event, 'X-Cache-Status', 'COALESCE')
     setResponseHeader(event, 'Cache-Control', `private, max-age=${ttlSeconds}, stale-while-revalidate=60`)
     console.info(`[gh][releases] inflight COALESCE u=${user.id} cursor=${cursor ?? ''} pageSize=${pageSize} details=${withDetails}`)
-    const data = await existing
-    if (data?.rateLimit) {
-      setResponseHeader(event, 'X-GH-RateLimit-Remaining', String(data.rateLimit.remaining))
-      setResponseHeader(event, 'X-GH-RateLimit-Cost', String(data.rateLimit.cost))
-      setResponseHeader(event, 'X-GH-RateLimit-ResetAt', String(data.rateLimit.resetAt))
+    try {
+      const data = await existing
+      if (data?.rateLimit) {
+        setResponseHeader(event, 'X-GH-RateLimit-Remaining', String(data.rateLimit.remaining))
+        setResponseHeader(event, 'X-GH-RateLimit-Cost', String(data.rateLimit.cost))
+        setResponseHeader(event, 'X-GH-RateLimit-ResetAt', String(data.rateLimit.resetAt))
+      }
+      return data
+    } catch (coalescedError: any) {
+      // The coalesced request failed - let this request try fresh
+      console.warn(`[gh][releases] coalesced request failed, trying fresh: ${coalescedError?.message}`)
     }
-    return data
   }
 
-  // Basic exponential backoff for transient errors
-  const maxRetries = 3
-  let delay = 200
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+  // Create a single promise that includes all retries (handled by retry plugin)
+  // The inflight entry persists until the entire operation succeeds or fails
+  const queryStr = buildQuery({ includeDescriptionHTML: withDetails, releasesCount })
+  console.info(`[gh][releases] cache MISS → fetching u=${user.id} cursor=${cursor ?? ''} pageSize=${pageSize} details=${withDetails}`)
+
+  const fetchPromise = (async (): Promise<GraphQLResponse> => {
     try {
-      // Optional API version header for stability
-      const queryStr = buildQuery({ includeDescriptionHTML: withDetails, releasesCount })
-      console.info(`[gh][releases] cache MISS → fetching u=${user.id} cursor=${cursor ?? ''} pageSize=${pageSize} details=${withDetails}`)
-      const promise = (async () => {
-        const data = await octokit.graphql<GraphQLResponse>(queryStr, {
-          cursor,
-          pageSize,
-          headers: { 'X-GitHub-Api-Version': '2022-11-28' },
-          // request timeout is configured on the client; no manual AbortController
-        })
-        await storage.setItem(cacheKey, { data, expiresAt: Date.now() + ttlSeconds * 1000 }, { ttl: ttlSeconds })
-        return data
-      })()
-      inflight.set(cacheKey, promise)
-      try {
-        const data = await promise
-        // Cache for a moderate time to reduce bursts (private per user via cookies)
-        setResponseHeader(event, 'X-Cache-Status', 'MISS')
-        setResponseHeader(event, 'Cache-Control', `private, max-age=${ttlSeconds}, stale-while-revalidate=60`)
-        if (data?.rateLimit) {
-          setResponseHeader(event, 'X-GH-RateLimit-Remaining', String(data.rateLimit.remaining))
-          setResponseHeader(event, 'X-GH-RateLimit-Cost', String(data.rateLimit.cost))
-          setResponseHeader(event, 'X-GH-RateLimit-ResetAt', String(data.rateLimit.resetAt))
-          console.info(`[gh][releases] rateLimit cost=${data.rateLimit.cost} remaining=${data.rateLimit.remaining} resetAt=${data.rateLimit.resetAt}`)
-        }
-        return data
-      } finally {
-        inflight.delete(cacheKey)
-      }
+      const data = await octokit.graphql<GraphQLResponse>(queryStr, {
+        cursor,
+        pageSize,
+        headers: { 'X-GitHub-Api-Version': '2022-11-28' }
+      })
+      await storage.setItem(cacheKey, { data, expiresAt: Date.now() + ttlSeconds * 1000 }, { ttl: ttlSeconds })
+      return data
     } catch (err: any) {
       const status = err?.status || err?.response?.status
       const message = err?.message || 'GitHub API error'
@@ -203,11 +194,6 @@ export default defineEventHandler(async (event) => {
 
       // Common network errors
       if (['ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN'].includes(err?.code)) {
-        if (attempt < maxRetries) {
-          await new Promise((r) => setTimeout(r, delay))
-          delay *= 2
-          continue
-        }
         throw createError({ statusCode: 503, statusMessage: 'Network error contacting GitHub' })
       }
 
@@ -216,9 +202,8 @@ export default defineEventHandler(async (event) => {
         throw createError({ statusCode: 401, statusMessage: 'Bad credentials' })
       }
 
-      // Rate limit / abuse detection
+      // Rate limit / abuse detection - convert 403 rate limit to 429
       if (status === 403 && (/rate limit/i.test(message) || /secondary rate/i.test(message))) {
-        // Try to surface a friendlier 429 to the client
         const reset = err?.headers?.['x-ratelimit-reset'] || err?.response?.headers?.['x-ratelimit-reset']
         let statusMessage = 'GitHub API rate limit exceeded.'
         if (reset) {
@@ -227,24 +212,32 @@ export default defineEventHandler(async (event) => {
         }
         throw createError({ statusCode: 429, statusMessage })
       }
-      if ((status === 429 || /rate limit/i.test(message)) && attempt < maxRetries) {
-        await new Promise((r) => setTimeout(r, delay))
-        delay *= 2
-        continue
-      }
 
-      // Retry on transient upstream errors
-      if ([500, 502, 503, 504].includes(status) && attempt < maxRetries) {
-        await new Promise((r) => setTimeout(r, delay))
-        delay *= 2
-        continue
-      }
-
-      // Fallback: surface useful status & message
+      // For 5xx errors that exhausted retries (retry plugin already tried), surface the error
+      // The retry plugin handles 500, 502, 503, 504 automatically
       throw createError({
-        statusCode: status || 500,
-        statusMessage: message
+        statusCode: status || 502,
+        statusMessage: `GitHub API temporarily unavailable: ${message}`
       })
     }
+  })()
+
+  // Register inflight BEFORE awaiting, delete AFTER completion
+  inflight.set(cacheKey, fetchPromise)
+
+  try {
+    const data = await fetchPromise
+    setResponseHeader(event, 'X-Cache-Status', 'MISS')
+    setResponseHeader(event, 'Cache-Control', `private, max-age=${ttlSeconds}, stale-while-revalidate=60`)
+    if (data?.rateLimit) {
+      setResponseHeader(event, 'X-GH-RateLimit-Remaining', String(data.rateLimit.remaining))
+      setResponseHeader(event, 'X-GH-RateLimit-Cost', String(data.rateLimit.cost))
+      setResponseHeader(event, 'X-GH-RateLimit-ResetAt', String(data.rateLimit.resetAt))
+      console.info(`[gh][releases] rateLimit cost=${data.rateLimit.cost} remaining=${data.rateLimit.remaining} resetAt=${data.rateLimit.resetAt}`)
+    }
+    return data
+  } finally {
+    // Only delete from inflight after the ENTIRE operation is complete (including all retries)
+    inflight.delete(cacheKey)
   }
 })

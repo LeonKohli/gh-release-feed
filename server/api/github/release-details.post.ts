@@ -1,5 +1,6 @@
 import { Octokit } from '@octokit/core'
 import { throttling } from '@octokit/plugin-throttling'
+import { retry } from '@octokit/plugin-retry'
 import { useStorage } from 'nitropack/runtime/internal/storage'
 
 interface GraphQLNodesResponse {
@@ -58,11 +59,18 @@ export default defineEventHandler(async (event) => {
   let rateLimit: GraphQLNodesResponse['rateLimit'] | null = null
 
   if (missingIds.length > 0) {
-    const ThrottledOctokit = Octokit.plugin(throttling)
-    const octokit = new ThrottledOctokit({
+    const OctokitWithPlugins = Octokit.plugin(throttling, retry)
+    const octokit = new OctokitWithPlugins({
       auth: accessToken,
       userAgent: 'gh-release-feed',
-      request: { timeout: 45_000 },
+      request: {
+        timeout: 45_000,
+        retries: 3,
+        retryAfter: 5
+      },
+      retry: {
+        doNotRetry: [400, 401, 403, 404, 422]
+      },
       throttle: {
         onRateLimit: (retryAfter: number, options: any, octokitInstance: any) => {
           octokitInstance.log.warn(`Request quota exhausted for request ${options.method} ${options.url}`)
@@ -84,43 +92,37 @@ export default defineEventHandler(async (event) => {
       }
     `
 
-    // Simple retry loop
-    const maxRetries = 3
-    let delay = 200
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        console.info(`[gh][details] cache MISS → fetching u=${user.id} ids=${missingIds.length}`)
-        const data = await octokit.graphql<GraphQLNodesResponse>(QUERY, {
-          ids: missingIds,
-          headers: { 'X-GitHub-Api-Version': '2022-11-28' }
-        })
+    // The retry plugin handles 5xx errors automatically
+    try {
+      console.info(`[gh][details] cache MISS → fetching u=${user.id} ids=${missingIds.length}`)
+      const data = await octokit.graphql<GraphQLNodesResponse>(QUERY, {
+        ids: missingIds,
+        headers: { 'X-GitHub-Api-Version': '2022-11-28' }
+      })
 
-        rateLimit = data.rateLimit
-        const fetched = (data.nodes || [])
-          .filter((n): n is { id: string; descriptionHTML?: string } => !!n && typeof n.id === 'string')
-          .map((n) => ({ id: n.id, descriptionHTML: n.descriptionHTML || '' }))
+      rateLimit = data.rateLimit
+      const fetched = (data.nodes || [])
+        .filter((n): n is { id: string; descriptionHTML?: string } => !!n && typeof n.id === 'string')
+        .map((n) => ({ id: n.id, descriptionHTML: n.descriptionHTML || '' }))
 
-        // Store individually for better reuse
-        await Promise.all(
-          fetched.map((it) => storage.setItem(
-            `gh:release-details:${user.id}:${encodeURIComponent(it.id)}`,
-            { id: it.id, descriptionHTML: it.descriptionHTML, expiresAt: Date.now() + ttlSeconds * 1000 },
-            { ttl: ttlSeconds }
-          ))
-        )
+      // Store individually for better reuse
+      await Promise.all(
+        fetched.map((it) => storage.setItem(
+          `gh:release-details:${user.id}:${encodeURIComponent(it.id)}`,
+          { id: it.id, descriptionHTML: it.descriptionHTML, expiresAt: Date.now() + ttlSeconds * 1000 },
+          { ttl: ttlSeconds }
+        ))
+      )
 
-        items.push(...fetched)
-        break
-      } catch (err: any) {
-        const status = err?.status || err?.response?.status
-        const message = err?.message || 'GitHub API error'
-        if ([500, 502, 503, 504].includes(status) && attempt < maxRetries) {
-          await new Promise((r) => setTimeout(r, delay))
-          delay *= 2
-          continue
-        }
-        throw createError({ statusCode: status || 500, statusMessage: message })
-      }
+      items.push(...fetched)
+    } catch (err: any) {
+      const status = err?.status || err?.response?.status
+      const message = err?.message || 'GitHub API error'
+      // For 5xx errors that exhausted retries, surface the error
+      throw createError({
+        statusCode: status || 502,
+        statusMessage: `GitHub API temporarily unavailable: ${message}`
+      })
     }
   }
 
