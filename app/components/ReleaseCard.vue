@@ -228,9 +228,10 @@
 
 <script setup lang="ts">
 import type { ReleaseObj } from '~/composables/useGithub'
-import { intlFormatDistance, format, differenceInHours, differenceInMinutes } from 'date-fns'
+import { intlFormatDistance, format } from 'date-fns'
 import { useMediaQuery } from '@vueuse/core'
 import { useReleaseGroups } from '~/composables/useReleaseGroups'
+import DOMPurify from 'isomorphic-dompurify'
 
 interface Language {
   id: string
@@ -403,12 +404,16 @@ function handleCardClick(event: MouseEvent) {
   }
 }
 
-// Sanitize HTML description
+// Sanitize HTML description using DOMPurify for comprehensive XSS protection
 function sanitizeDescription(html: string) {
-  return html.replace(
-    /<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, 
-    ''
-  )
+  return DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: ['p', 'br', 'b', 'i', 'em', 'strong', 'a', 'ul', 'ol', 'li', 'code', 'pre', 'blockquote', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'img', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'span', 'div', 'details', 'summary'],
+    ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class', 'id', 'target', 'rel', 'width', 'height'],
+    ALLOW_DATA_ATTR: false,
+    ADD_ATTR: ['target', 'rel'],
+    FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'form', 'input', 'button'],
+    FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus', 'onblur']
+  })
 }
 </script>
 

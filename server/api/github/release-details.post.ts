@@ -1,7 +1,4 @@
-import { Octokit } from '@octokit/core'
-import { throttling } from '@octokit/plugin-throttling'
-import { retry } from '@octokit/plugin-retry'
-import { useStorage } from 'nitropack/runtime/internal/storage'
+// All server utils are auto-imported by Nitro
 
 interface GraphQLNodesResponse {
   nodes: Array<null | { __typename?: string; id?: string; descriptionHTML?: string }>
@@ -17,12 +14,7 @@ interface GraphQLNodesResponse {
 type DetailsCacheEntry = { id: string; descriptionHTML: string; expiresAt: number }
 
 export default defineEventHandler(async (event) => {
-  const session = await getUserSession(event)
-  if (!session?.user?.accessToken) {
-    throw createError({ statusCode: 401, statusMessage: 'Not authenticated' })
-  }
-  const user = session.user!
-  const accessToken = session.user.accessToken!
+  const { user, accessToken } = await requireGithubAuth(event)
 
   const body = await readBody<{ ids?: string[] }>(event)
   const ids = Array.isArray(body?.ids) ? body!.ids.filter((v) => typeof v === 'string') : []
@@ -59,29 +51,7 @@ export default defineEventHandler(async (event) => {
   let rateLimit: GraphQLNodesResponse['rateLimit'] | null = null
 
   if (missingIds.length > 0) {
-    const OctokitWithPlugins = Octokit.plugin(throttling, retry)
-    const octokit = new OctokitWithPlugins({
-      auth: accessToken,
-      userAgent: 'gh-release-feed',
-      request: {
-        timeout: 45_000,
-        retries: 3,
-        retryAfter: 5
-      },
-      retry: {
-        doNotRetry: [400, 401, 403, 404, 422]
-      },
-      throttle: {
-        onRateLimit: (retryAfter: number, options: any, octokitInstance: any) => {
-          octokitInstance.log.warn(`Request quota exhausted for request ${options.method} ${options.url}`)
-          if (options.request?.retryCount === 0) return true
-        },
-        onSecondaryRateLimit: (retryAfter: number, options: any, octokitInstance: any) => {
-          octokitInstance.log.warn(`SecondaryRateLimit detected for request ${options.method} ${options.url}`)
-          if (options.request?.retryCount === 0) return true
-        }
-      }
-    })
+    const octokit = createGithubClient(accessToken)
 
     const QUERY = `
       query($ids: [ID!]!) {
@@ -101,9 +71,10 @@ export default defineEventHandler(async (event) => {
       })
 
       rateLimit = data.rateLimit
+      type ValidNode = { id: string; descriptionHTML?: string }
       const fetched = (data.nodes || [])
-        .filter((n): n is { id: string; descriptionHTML?: string } => !!n && typeof n.id === 'string')
-        .map((n) => ({ id: n.id, descriptionHTML: n.descriptionHTML || '' }))
+        .filter((n): n is ValidNode => !!n && typeof n.id === 'string')
+        .map((n: ValidNode) => ({ id: n.id, descriptionHTML: n.descriptionHTML || '' }))
 
       // Store individually for better reuse
       await Promise.all(
@@ -115,14 +86,8 @@ export default defineEventHandler(async (event) => {
       )
 
       items.push(...fetched)
-    } catch (err: any) {
-      const status = err?.status || err?.response?.status
-      const message = err?.message || 'GitHub API error'
-      // For 5xx errors that exhausted retries, surface the error
-      throw createError({
-        statusCode: status || 502,
-        statusMessage: `GitHub API temporarily unavailable: ${message}`
-      })
+    } catch (err: unknown) {
+      handleGithubError(err)
     }
   }
 

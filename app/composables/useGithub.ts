@@ -4,9 +4,7 @@ import { openDB, type IDBPDatabase } from 'idb'
 
 
 const BATCH_SIZES = {
-    API_FETCH: 100,     // Number of repositories to fetch per API call
-    PROCESSING: 10,     // Number of repositories to process in parallel
-    RELEASE_FETCH: 10   // Number of releases to fetch per repository
+    PROCESSING: 10      // Number of repositories to process in parallel
 } as const
 
 interface RepositoryNode {
@@ -552,6 +550,15 @@ export const useGithub = () => {
         }, delayMs)
     }
 
+    // Cleanup function for debounce timer to prevent memory leaks
+    const clearDetailsTimer = () => {
+        if (detailsDebounceTimer) {
+            clearTimeout(detailsDebounceTimer)
+            detailsDebounceTimer = null
+        }
+        pendingDetailIds.clear()
+    }
+
     const populateDescriptionsForMissing = async (limit = 20) => {
         if (process.server) return
         const missing = store.releases
@@ -866,6 +873,12 @@ export const useGithub = () => {
         }
     })
 
+    // Full cleanup function that clears timers and store
+    const cleanup = async () => {
+        clearDetailsTimer()
+        await store.cleanup()
+    }
+
     return {
         releases: computed(() => store.releases),
         loading: computed(() => store.loading),
@@ -877,6 +890,6 @@ export const useGithub = () => {
         retries: computed(() => store.retries),
         fetchReleases,
         clearCache: async () => await store.clearCache(),
-        cleanup: async () => await store.cleanup()
+        cleanup
     }
 }

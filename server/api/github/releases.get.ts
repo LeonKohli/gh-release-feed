@@ -1,7 +1,4 @@
-import { Octokit } from '@octokit/core'
-import { throttling } from '@octokit/plugin-throttling'
-import { retry } from '@octokit/plugin-retry'
-import { useStorage } from 'nitropack/runtime/internal/storage'
+// All server utils (useStorage, createGithubClient, handleGithubError, requireGithubAuth) are auto-imported by Nitro
 
 interface GraphQLResponse {
   viewer: {
@@ -85,12 +82,7 @@ function buildQuery (opts: { includeDescriptionHTML: boolean, releasesCount: num
 }
 
 export default defineEventHandler(async (event) => {
-  const session = await getUserSession(event)
-  if (!session?.user?.accessToken) {
-    throw createError({ statusCode: 401, statusMessage: 'Not authenticated' })
-  }
-  const user = session.user!
-  const accessToken = session.user.accessToken!
+  const { user, accessToken } = await requireGithubAuth(event)
 
   const query = getQuery(event)
   const rawCursor = typeof query.cursor === 'string' ? query.cursor : null
@@ -101,35 +93,7 @@ export default defineEventHandler(async (event) => {
   const withDetails = String(query.withDetails ?? 'false') === 'true'
   const releasesCount = Math.min(Math.max(1, Number(process.env.GITHUB_RELEASES_PER_REPO ?? '3')), 10)
 
-  const OctokitWithPlugins = Octokit.plugin(throttling, retry)
-  const octokit = new OctokitWithPlugins({
-    auth: accessToken,
-    userAgent: 'gh-release-feed',
-    request: {
-      timeout: 45_000,
-      retries: 3,        // retry plugin: 3 retries for transient errors (502, 503, etc.)
-      retryAfter: 5      // retry plugin: initial delay in seconds
-    },
-    retry: {
-      doNotRetry: [400, 401, 403, 404, 422]  // Don't retry client errors
-    },
-    throttle: {
-      onRateLimit: (retryAfter: number, options: any, octokitInstance: any) => {
-        octokitInstance.log.warn(`Request quota exhausted for request ${options.method} ${options.url}`)
-        if (options.request?.retryCount === 0) {
-          octokitInstance.log.info(`Retrying after ${retryAfter} seconds!`)
-          return true
-        }
-      },
-      onSecondaryRateLimit: (retryAfter: number, options: any, octokitInstance: any) => {
-        octokitInstance.log.warn(`SecondaryRateLimit detected for request ${options.method} ${options.url}`)
-        if (options.request?.retryCount === 0) {
-          octokitInstance.log.info(`Retrying after ${retryAfter} seconds!`)
-          return true
-        }
-      }
-    }
-  })
+  const octokit = createGithubClient(accessToken)
 
   const storage = useStorage('cache')
   const ttlSeconds = Number(process.env.GITHUB_CACHE_TTL ?? '300')
@@ -183,42 +147,8 @@ export default defineEventHandler(async (event) => {
       })
       await storage.setItem(cacheKey, { data, expiresAt: Date.now() + ttlSeconds * 1000 }, { ttl: ttlSeconds })
       return data
-    } catch (err: any) {
-      const status = err?.status || err?.response?.status
-      const message = err?.message || 'GitHub API error'
-
-      // Abort/timeout handling
-      if (err?.name === 'AbortError' || err?.code === 'ETIMEDOUT') {
-        throw createError({ statusCode: 504, statusMessage: 'Request timeout contacting GitHub' })
-      }
-
-      // Common network errors
-      if (['ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN'].includes(err?.code)) {
-        throw createError({ statusCode: 503, statusMessage: 'Network error contacting GitHub' })
-      }
-
-      // Bad credentials or unauthorized
-      if (status === 401 || /bad credentials/i.test(message)) {
-        throw createError({ statusCode: 401, statusMessage: 'Bad credentials' })
-      }
-
-      // Rate limit / abuse detection - convert 403 rate limit to 429
-      if (status === 403 && (/rate limit/i.test(message) || /secondary rate/i.test(message))) {
-        const reset = err?.headers?.['x-ratelimit-reset'] || err?.response?.headers?.['x-ratelimit-reset']
-        let statusMessage = 'GitHub API rate limit exceeded.'
-        if (reset) {
-          const resetDate = new Date(parseInt(reset) * 1000)
-          statusMessage += ` Resets at ${resetDate.toLocaleTimeString()}.`
-        }
-        throw createError({ statusCode: 429, statusMessage })
-      }
-
-      // For 5xx errors that exhausted retries (retry plugin already tried), surface the error
-      // The retry plugin handles 500, 502, 503, 504 automatically
-      throw createError({
-        statusCode: status || 502,
-        statusMessage: `GitHub API temporarily unavailable: ${message}`
-      })
+    } catch (err: unknown) {
+      handleGithubError(err)
     }
   })()
 
