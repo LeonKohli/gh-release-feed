@@ -1,4 +1,6 @@
-import type { ReleaseObj } from './useGithub'
+import type { NormalizedRelease } from './useAtomReleases'
+
+type ReleaseObj = NormalizedRelease
 import { differenceInHours, differenceInMinutes } from 'date-fns'
 import { createSharedComposable } from '@vueuse/core'
 
@@ -23,17 +25,32 @@ export const useReleaseGroups = createSharedComposable(() => {
   
   // Create a cache map for memoization
   const cache = new Map<string, ReleaseGroup[]>()
+  // Track last releases reference for quick invalidation check
+  let lastReleasesRef: ReleaseObj[] | null = null
+  let lastCacheKey: string | null = null
 
+  // O(1) cache key using length + boundary IDs (sufficient for sorted arrays)
   const getCacheKey = (releases: ReleaseObj[]): string => {
-    return releases.map(r => `${r.id}-${r.publishedAt}`).join('|')
+    if (releases.length === 0) return 'empty'
+    const first = releases[0]
+    const last = releases[releases.length - 1]
+    // For sorted arrays, length + first + last is sufficient for cache invalidation
+    return `${releases.length}:${first?.id || ''}:${last?.id || ''}`
   }
 
   const groupReleases = (releases: ReleaseObj[]): ReleaseGroup[] => {
     if (!releases.length) return []
 
-    // Check cache first
+    // Fast path: same array reference = same results
+    if (releases === lastReleasesRef && lastCacheKey && cache.has(lastCacheKey)) {
+      return cache.get(lastCacheKey)!
+    }
+
+    // Check cache by key
     const cacheKey = getCacheKey(releases)
     if (cache.has(cacheKey)) {
+      lastReleasesRef = releases
+      lastCacheKey = cacheKey
       return cache.get(cacheKey)!
     }
 
@@ -112,10 +129,12 @@ export const useReleaseGroups = createSharedComposable(() => {
 
     // Store result in cache before returning
     cache.set(cacheKey, groups)
+    lastReleasesRef = releases
+    lastCacheKey = cacheKey
     return groups
   }
 
-  const formatGroupTimeDiff = (group: ReleaseGroup) => {
+  const formatGroupTimeDiff = (group: Pick<ReleaseGroup, 'releases'>) => {
     if (!group.releases || group.releases.length <= 1) return null
 
     const first = group.releases[0]
@@ -138,6 +157,8 @@ export const useReleaseGroups = createSharedComposable(() => {
   // Add cache clearing method
   const clearCache = () => {
     cache.clear()
+    lastReleasesRef = null
+    lastCacheKey = null
   }
 
   return {

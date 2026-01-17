@@ -227,7 +227,7 @@
 </template>
 
 <script setup lang="ts">
-import type { ReleaseObj } from '~/composables/useGithub'
+import type { NormalizedRelease as ReleaseObj } from '~/composables/useAtomReleases'
 import { intlFormatDistance, format } from 'date-fns'
 import { useMediaQuery } from '@vueuse/core'
 import { useReleaseGroups } from '~/composables/useReleaseGroups'
@@ -336,15 +336,15 @@ const sanitizedDescription = computed(() => {
 // Calculate time difference for grouped releases
 const timeDiff = computed(() => {
   if (!isGrouped.value || !props.releases) return null
-  return formatGroupTimeDiff({ releases: props.releases } as any)
+  return formatGroupTimeDiff({ releases: props.releases! })
 })
 
 // Extract languages for v-memo optimization
 const languages = computed<Language[]>(() => {
-  const allLangs = mainRelease.value.repo.languages.edges.map(edge => edge.node)
+  const allLangs = mainRelease.value.repo.languages.edges.map((edge: { node: Language }) => edge.node)
   // Move primary language to front if it exists
   if (mainRelease.value.repo.primaryLanguage) {
-    const primaryIndex = allLangs.findIndex(lang => lang.id === mainRelease.value.repo.primaryLanguage?.id)
+    const primaryIndex = allLangs.findIndex((lang: Language) => lang.id === mainRelease.value.repo.primaryLanguage?.id)
     if (primaryIndex > 0 && mainRelease.value.repo.primaryLanguage) {
       const [primary] = allLangs.splice(primaryIndex, 1)
       if (primary) {

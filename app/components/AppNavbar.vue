@@ -14,13 +14,13 @@
 
           <div class="flex items-center gap-2">
             <!-- Search Bar (Desktop) -->
-            <div 
+            <div
               v-if="loggedIn"
               class="relative hidden w-64 sm:flex xl:w-80"
             >
               <div class="relative flex items-center w-full">
-                <Icon 
-                  name="lucide:search" 
+                <Icon
+                  name="lucide:search"
                   class="absolute w-4 h-4 pointer-events-none left-3 text-muted-foreground"
                 />
                 <Input
@@ -31,10 +31,10 @@
                   @input="emit('update:searchQuery', ($event.target as HTMLInputElement).value)"
                 />
                 <div class="absolute flex items-center gap-1 right-1">
-                  <Icon 
+                  <Icon
                     v-if="isSearching"
-                    name="lucide:loader-2" 
-                    class="w-4 h-4 text-muted-foreground animate-spin" 
+                    name="lucide:loader-2"
+                    class="w-4 h-4 text-muted-foreground animate-spin"
                   />
                   <Button
                     v-if="searchQuery"
@@ -58,9 +58,9 @@
               class="relative sm:hidden"
               @click="isSearchVisible = !isSearchVisible"
             >
-              <Icon 
-                :name="isSearchVisible ? 'lucide:x' : 'lucide:search'" 
-                class="w-5 h-5" 
+              <Icon
+                :name="isSearchVisible ? 'lucide:x' : 'lucide:search'"
+                class="w-5 h-5"
               />
             </Button>
 
@@ -68,18 +68,17 @@
               <div v-if="loggedIn" class="flex items-center gap-3">
                 <ClientOnly>
                   <template #default>
-                    <DropdownMenu v-if="isLoadingAny">
+                    <DropdownMenu v-if="isLoading">
                       <DropdownMenuTrigger class="relative">
-                        <Button 
-                          variant="ghost" 
+                        <Button
+                          variant="ghost"
                           size="icon"
                           class="relative opacity-50"
                           :title="loadingState"
                         >
-                          <Icon 
-                            name="lucide:refresh-cw" 
-                            class="w-5 h-5 text-muted-foreground" 
-                            :class="{ 'animate-spin': isLoadingAny }" 
+                          <Icon
+                            name="lucide:refresh-cw"
+                            class="w-5 h-5 text-muted-foreground animate-spin"
                           />
                           <span class="absolute -top-1 -right-1">
                             <span class="relative flex w-2 h-2">
@@ -95,44 +94,28 @@
                         <div class="px-2 py-1.5 text-sm">
                           <div class="space-y-2">
                             <div class="flex items-center justify-between gap-4">
-                              <span class="text-muted-foreground">Repositories Found:</span>
-                              <span class="font-medium">{{ reposProcessed }}</span>
-                            </div>
-                            <div class="flex items-center justify-between gap-4">
-                              <span class="text-muted-foreground">Current Batch:</span>
-                              <span class="font-medium">{{ Math.floor(reposProcessed / 5) + 1 }}</span>
-                            </div>
-                            <div class="flex items-center justify-between gap-4">
-                              <span class="text-muted-foreground">API Calls Left:</span>
-                              <span class="font-medium">{{ rateLimitRemaining }}</span>
-                            </div>
-                            <div v-if="retries > 0" class="flex items-center justify-between gap-4 text-yellow-500">
-                              <span>Retries:</span>
-                              <span class="font-medium">{{ retries }}</span>
-                            </div>
-                            <div v-if="rateLimitResetAt" class="flex items-center justify-between gap-4">
-                              <span class="text-muted-foreground">Rate Limit Resets:</span>
-                              <span class="font-medium">{{ formatResetTime }}</span>
+                              <span class="text-muted-foreground">Repos Processed:</span>
+                              <span class="font-medium">{{ reposProcessed }} / {{ totalRepos || '?' }}</span>
                             </div>
                             <div class="pt-1 text-xs text-muted-foreground">
-                              Processing repositories in parallel...
+                              Fetching releases via Atom feeds...
                             </div>
                           </div>
                         </div>
                       </DropdownMenuContent>
                     </DropdownMenu>
-                    <Button 
+                    <Button
                       v-else
-                      variant="ghost" 
+                      variant="ghost"
                       size="icon"
                       class="relative"
                       @click="handleRefresh"
-                      :disabled="isLoadingAny"
+                      :disabled="isLoading"
                       :title="loadingState"
                     >
-                      <Icon 
-                        name="lucide:refresh-cw" 
-                        class="w-5 h-5" 
+                      <Icon
+                        name="lucide:refresh-cw"
+                        class="w-5 h-5"
                       />
                     </Button>
                   </template>
@@ -177,15 +160,15 @@
         </div>
 
         <!-- Search Bar (Mobile Expandable) -->
-        <div 
+        <div
           class="relative w-full transition-all duration-200 sm:hidden"
           :class="[
             isSearchVisible ? 'h-10 opacity-100' : 'h-0 opacity-0 overflow-hidden',
           ]"
         >
           <div class="relative flex items-center h-full">
-            <Icon 
-              name="lucide:search" 
+            <Icon
+              name="lucide:search"
               class="absolute w-4 h-4 pointer-events-none left-3 text-muted-foreground"
             />
             <Input
@@ -196,10 +179,10 @@
               @input="emit('update:searchQuery', ($event.target as HTMLInputElement).value)"
             />
             <div class="absolute flex items-center gap-1 right-1">
-              <Icon 
+              <Icon
                 v-if="isSearching"
-                name="lucide:loader-2" 
-                class="w-4 h-4 text-muted-foreground animate-spin" 
+                name="lucide:loader-2"
+                class="w-4 h-4 text-muted-foreground animate-spin"
               />
               <Button
                 v-if="searchQuery"
@@ -220,18 +203,16 @@
 </template>
 
 <script setup lang="ts">
-import { useMediaQuery, useTimeAgo } from '@vueuse/core'
+import { useMediaQuery } from '@vueuse/core'
 import type { Ref } from 'vue'
 
 const props = defineProps<{
   searchQuery: string
   isSearching: boolean
-  isLoadingAny: boolean
+  isLoading: boolean
   loadingState: string
   reposProcessed: number
-  rateLimitRemaining: number
-  rateLimitResetAt: string | null
-  retries: number
+  totalRepos: number
 }>()
 
 const emit = defineEmits<{
@@ -253,12 +234,6 @@ watch(isMobile, (mobile) => {
   }
 })
 
-// Format time ago for rate limit reset
-const formatResetTime = computed(() => {
-  if (!props.rateLimitResetAt) return ''
-  return useTimeAgo(new Date(props.rateLimitResetAt)).value
-})
-
 function handleRefresh() {
   emit('refresh')
 }
@@ -266,4 +241,4 @@ function handleRefresh() {
 function handleLogout() {
   emit('logout')
 }
-</script> 
+</script>

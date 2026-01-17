@@ -5,12 +5,10 @@
       <AppNavbar
         v-model:searchQuery="searchQuery"
         :isSearching="isSearching"
-        :isLoadingAny="isLoadingAny"
+        :isLoading="loading"
         :loadingState="loadingState"
         :reposProcessed="reposProcessed"
-        :rateLimitRemaining="rateLimitRemaining"
-        :rateLimitResetAt="rateLimitResetAt"
-        :retries="retries"
+        :totalRepos="totalRepos"
         @refresh="handleRefresh"
         @logout="handleLogout"
       />
@@ -40,53 +38,47 @@
             </Alert>
           </div>
 
-          <!-- Loading Skeleton -->
-          <div 
-            v-if="loading && (!visibleReleaseGroups.length || reposProcessed === 0)" 
-            class="grid w-full gap-4 sm:gap-6 min-h-[calc(100vh-16rem)]"
-          >
-            <Card v-for="n in 3" :key="n" class="flex-1 w-full p-3 overflow-hidden sm:p-6">
-              <div class="space-y-6">
-                <div class="flex items-center gap-3">
-                  <Skeleton class="flex-shrink-0 w-8 h-8 rounded-full" />
-                  <div class="flex-1 min-w-0 space-y-3">
-                    <Skeleton class="w-1/4 h-4" />
-                    <Skeleton class="w-1/3 h-3" />
+          <!-- Show releases as they load -->
+          <div class="grid w-full gap-4 sm:gap-6">
+            <!-- Show actual releases -->
+            <template v-if="visibleReleaseGroups.length > 0">
+              <ReleaseCard
+                v-for="group in visibleReleaseGroups"
+                :key="group.id"
+                :releases="group.releases"
+                class="w-full"
+              />
+            </template>
+
+            <!-- Loading skeletons at the end while fetching more -->
+            <template v-if="loading">
+              <Card v-for="n in (visibleReleaseGroups.length ? 1 : 3)" :key="`skeleton-${n}`" class="flex-1 w-full p-3 overflow-hidden sm:p-6">
+                <div class="space-y-6">
+                  <div class="flex items-center gap-3">
+                    <Skeleton class="flex-shrink-0 w-8 h-8 rounded-full" />
+                    <div class="flex-1 min-w-0 space-y-3">
+                      <Skeleton class="w-1/4 h-4" />
+                      <Skeleton class="w-1/3 h-3" />
+                    </div>
+                  </div>
+                  <div class="space-y-4">
+                    <Skeleton class="w-3/4 h-5" />
+                    <Skeleton class="w-1/2 h-4" />
+                    <Skeleton class="w-full h-24" />
+                    <Skeleton class="w-2/3 h-4" />
                   </div>
                 </div>
-                <div class="space-y-4">
-                  <Skeleton class="w-3/4 h-5" />
-                  <Skeleton class="w-1/2 h-4" />
-                  <Skeleton class="w-full h-24" />
-                  <Skeleton class="w-2/3 h-4" />
-                </div>
-              </div>
-            </Card>
-          </div>
-          <div v-else class="grid w-full gap-4 sm:gap-6">
-            <template v-if="visibleReleaseGroups.length > 0">
-              <div class="grid w-full gap-4 sm:gap-6">
-                <ReleaseCard 
-                  v-for="group in visibleReleaseGroups" 
-                  :key="group.id" 
-                  :releases="group.releases"
-                  class="w-full" 
-                />
-              </div>
+              </Card>
             </template>
           </div>
 
           <div v-if="hasMoreReleases" ref="loadMoreTrigger" class="py-6 text-center sm:py-8">
-            <Button 
-              v-if="!loading" 
-              @click="page++" 
+            <Button
+              v-if="!loading"
+              @click="page++"
               class="w-full max-w-xs sm:w-auto"
-              :disabled="backgroundLoading"
             >
               <span>Load More</span>
-              <span v-if="backgroundLoading" class="ml-2">
-                <span class="inline-block w-4 h-4 border-2 rounded-full animate-spin border-primary border-t-transparent"></span>
-              </span>
             </Button>
             <div v-else class="flex justify-center">
               <div class="w-8 h-8 border-4 rounded-full animate-spin border-primary border-t-transparent"></div>
@@ -99,28 +91,27 @@
 </template>
 
 <script setup lang="ts">
-import { useStorage, useElementVisibility, useTimeAgo, useMediaQuery, useDebounceFn } from '@vueuse/core'
-import type { Ref } from 'vue'
-import type { ReleaseGroup } from '~/composables/useReleaseGroups'
+import { useElementVisibility, useDebounceFn } from '@vueuse/core'
 
 const { loggedIn, clear, ready } = useUserSession()
+
+// Atom-based approach (fast, no rate limits with auth)
 const {
   releases,
   loading,
-  backgroundLoading,
   error,
   reposProcessed,
-  rateLimitRemaining,
-  rateLimitResetAt,
-  retries,
-  fetchReleases,
+  totalRepos,
+  loadingRepos,
+  loadingReleases,
+  fetchAllReleases,
   clearCache
-} = useGithub()
+} = useAtomReleases()
 
 const { groupReleases } = useReleaseGroups()
 
 const page = ref(1)
-const perPage = useStorage('release-feed-page-size', 20)
+const perPage = 20
 const searchQuery = ref('')
 const debouncedSearchQuery = ref('')
 const isSearching = ref(false)
@@ -129,7 +120,6 @@ const isSearching = ref(false)
 const updateDebouncedSearch = useDebounceFn((value: string) => {
   isSearching.value = true
   debouncedSearchQuery.value = value
-  // Small delay to show loading state
   setTimeout(() => {
     isSearching.value = false
   }, 300)
@@ -151,8 +141,8 @@ const filteredReleases = computed(() => {
     const releaseName = release.name?.toLowerCase() || ''
     const tagName = release.tagName?.toLowerCase() || ''
     const description = release.descriptionHTML?.toLowerCase() || ''
-    
-    return repoName.includes(query) || 
+
+    return repoName.includes(query) ||
            ownerName.includes(query) ||
            releaseName.includes(query) ||
            tagName.includes(query) ||
@@ -168,7 +158,7 @@ const releaseGroups = computed(() => {
 
 const visibleReleaseGroups = computed(() => {
   if (!releaseGroups.value) return []
-  return releaseGroups.value.slice(0, page.value * perPage.value)
+  return releaseGroups.value.slice(0, page.value * perPage)
 })
 
 const hasMoreReleases = computed(() => {
@@ -184,11 +174,10 @@ watch(searchQuery, () => {
 const loadMoreTrigger = ref<HTMLElement | null>(null)
 const isLoadMoreVisible = useElementVisibility(loadMoreTrigger)
 
-// Watch visibility with throttled handler
 watchDebounced(
   isLoadMoreVisible,
   (visible) => {
-    if (visible && !loading.value && !backgroundLoading.value && hasMoreReleases.value) {
+    if (visible && !loading.value && hasMoreReleases.value) {
       page.value++
     }
   },
@@ -197,26 +186,20 @@ watchDebounced(
 
 // Force refresh releases
 const handleRefresh = useDebounceFn(async () => {
-  if (loading.value || backgroundLoading.value) return
+  if (loading.value) return
   try {
-    page.value = 1 // Reset to first page
-    await clearCache() // Clear the cache first
-    await fetchReleases() // Then fetch fresh data
-  } catch (error) {
-    console.error('Error refreshing releases:', error)
+    page.value = 1
+    clearCache()
+    await fetchAllReleases()
+  } catch (err) {
+    console.error('Error refreshing releases:', err)
   }
 }, 300)
 
-// Format time ago for rate limit reset
-const formatResetTime = computed(() => {
-  if (!rateLimitResetAt.value) return ''
-  return useTimeAgo(new Date(rateLimitResetAt.value)).value
-})
-
-// Initial data loading - wait for session to be ready before fetching
+// Initial data loading
 watchEffect(async () => {
   if (ready.value && loggedIn.value) {
-    await fetchReleases()
+    await fetchAllReleases()
   }
 })
 
@@ -236,28 +219,14 @@ useHead({
   ]
 })
 
-// Computed property for loading state display
+// Loading state display
 const loadingState = computed(() => {
-  if (loading.value) return 'Loading releases...'
-  if (backgroundLoading.value) return 'Loading more releases...'
+  if (loadingRepos.value) {
+    return `Loading repos (${reposProcessed.value}/${totalRepos.value || '?'})...`
+  }
+  if (loadingReleases.value) {
+    return `Fetching releases (${reposProcessed.value}/${totalRepos.value || '?'})...`
+  }
   return 'Refresh releases'
 })
-
-// Computed property for loading animation
-const isLoadingAny = computed(() => loading.value || backgroundLoading.value)
-
-// Mobile search visibility state
-const isSearchVisible = ref<boolean>(false)
-const isMobile = useMediaQuery('(max-width: 640px)') as Ref<boolean>
-
-// Reset search visibility when switching between mobile and desktop
-watch(isMobile, (mobile) => {
-  if (!mobile) {
-    isSearchVisible.value = false
-  }
-})
 </script>
-
-<style>
-/* Removed transition styles */
-</style>

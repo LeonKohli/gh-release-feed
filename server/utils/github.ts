@@ -1,7 +1,8 @@
 import { Octokit } from '@octokit/core'
 import { throttling } from '@octokit/plugin-throttling'
 import { retry } from '@octokit/plugin-retry'
-import { H3Event } from 'h3'
+import type { H3Event } from 'h3'
+import type { EndpointDefaults } from '@octokit/types'
 
 const OctokitWithPlugins = Octokit.plugin(throttling, retry)
 
@@ -11,10 +12,26 @@ interface OctokitOptions {
   timeout?: number
 }
 
+// Proper type for GitHub API errors
+interface OctokitError extends Error {
+  status?: number
+  code?: string
+  response?: {
+    status?: number
+    headers?: Record<string, string>
+  }
+  headers?: Record<string, string>
+}
+
+// Type guard for OctokitError
+function isOctokitError(err: unknown): err is OctokitError {
+  return err instanceof Error
+}
+
 const defaultOptions: Required<OctokitOptions> = {
-  retries: 3,
-  retryAfter: 5,
-  timeout: 45_000
+  retries: 5,
+  retryAfter: 15,
+  timeout: 60_000
 }
 
 export function createGithubClient(accessToken: string, options: OctokitOptions = {}) {
@@ -32,30 +49,35 @@ export function createGithubClient(accessToken: string, options: OctokitOptions 
       doNotRetry: [400, 401, 403, 404, 422]
     },
     throttle: {
-      onRateLimit: (retryAfter: number, options: any, octokitInstance: any) => {
-        octokitInstance.log.warn(`Request quota exhausted for request ${options.method} ${options.url}`)
-        if (options.request?.retryCount === 0) return true
+      onRateLimit: (retryAfter: number, options: Required<EndpointDefaults>, octokitInstance: Octokit, retryCount: number) => {
+        octokitInstance.log.warn(`Request quota exhausted for request ${options.method} ${options.url} (retry ${retryCount})`)
+        // Retry up to 3 times for rate limit
+        if (retryCount < 3) return true
+        return false
       },
-      onSecondaryRateLimit: (retryAfter: number, options: any, octokitInstance: any) => {
-        octokitInstance.log.warn(`SecondaryRateLimit detected for request ${options.method} ${options.url}`)
-        if (options.request?.retryCount === 0) return true
+      onSecondaryRateLimit: (retryAfter: number, options: Required<EndpointDefaults>, octokitInstance: Octokit, retryCount: number) => {
+        octokitInstance.log.warn(`SecondaryRateLimit detected for request ${options.method} ${options.url} (retry ${retryCount}, waiting ${retryAfter}s)`)
+        // Retry up to 3 times for secondary rate limit with longer wait
+        if (retryCount < 3) return true
+        return false
       }
     }
   })
 }
 
 export function handleGithubError(err: unknown): never {
-  const error = err as any
-  const status = error?.status || error?.response?.status
-  const message = error?.message || 'GitHub API error'
+  const status = isOctokitError(err) ? (err.status || err.response?.status) : undefined
+  const message = err instanceof Error ? err.message : 'GitHub API error'
+  const errorCode = isOctokitError(err) ? err.code : undefined
+  const errorName = err instanceof Error ? err.name : undefined
 
   // Abort/timeout handling
-  if (error?.name === 'AbortError' || error?.code === 'ETIMEDOUT') {
+  if (errorName === 'AbortError' || errorCode === 'ETIMEDOUT') {
     throw createError({ statusCode: 504, statusMessage: 'Request timeout contacting GitHub' })
   }
 
   // Common network errors
-  if (['ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN'].includes(error?.code)) {
+  if (errorCode && ['ECONNRESET', 'ENOTFOUND', 'EAI_AGAIN'].includes(errorCode)) {
     throw createError({ statusCode: 503, statusMessage: 'Network error contacting GitHub' })
   }
 
@@ -66,7 +88,8 @@ export function handleGithubError(err: unknown): never {
 
   // Rate limit / abuse detection - convert 403 rate limit to 429
   if (status === 403 && (/rate limit/i.test(message) || /secondary rate/i.test(message))) {
-    const reset = error?.headers?.['x-ratelimit-reset'] || error?.response?.headers?.['x-ratelimit-reset']
+    const headers = isOctokitError(err) ? (err.headers || err.response?.headers) : undefined
+    const reset = headers?.['x-ratelimit-reset']
     let statusMessage = 'GitHub API rate limit exceeded.'
     if (reset) {
       const resetDate = new Date(parseInt(reset) * 1000)
