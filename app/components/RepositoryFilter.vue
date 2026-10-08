@@ -44,7 +44,10 @@ watch(open, () => {
         </Button>
       </ComboboxTrigger>
     </ComboboxAnchor>
-    <ComboboxList align="start" class="w-(--reka-combobox-trigger-width) max-w-[calc(100vw-2rem)]">
+    <ComboboxList
+      align="start"
+      class="w-(--reka-combobox-trigger-width) max-w-[calc(100vw-2rem)] min-w-72"
+    >
       <ComboboxInput
         :display-value="() => ''"
         :model-value="query"

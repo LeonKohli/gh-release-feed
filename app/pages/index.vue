@@ -158,54 +158,53 @@ useHead({
           >
         </Card>
         <template v-else>
-          <div class="flex flex-col gap-4 pt-3">
-            <FieldGroup class="grid gap-4 sm:grid-cols-2">
-              <Field>
-                <FieldLabel for="repository-filter">Repository</FieldLabel>
-                <RepositoryFilter v-model="selectedRepository" :repositories="repositoryOptions" />
-                <FieldDescription
-                  >Projects with releases in the last three months.</FieldDescription
-                >
-              </Field>
-              <Field>
-                <FieldLabel for="release-search">{{
-                  searchScope === 'notes' ? 'Search release notes' : 'Find a release'
-                }}</FieldLabel>
-                <FeedSearch
-                  id="release-search"
-                  v-model="searchQuery"
-                  v-model:scope="searchScope"
-                  :searching="isSearching || searchingNotes"
-                />
-                <FieldDescription id="release-search-hint">{{
-                  searchScope === 'notes'
-                    ? 'Find a change across notes in your current filters.'
-                    : 'Search titles and versions. Choose Notes to find a change.'
-                }}</FieldDescription>
-              </Field>
-            </FieldGroup>
-            <div class="flex flex-wrap items-center justify-between gap-3">
-              <ReleaseFilters v-model="releaseType" class="w-auto" />
-              <Button v-if="hasFilters" variant="ghost" size="sm" @click="resetFilters"
-                >Reset filters</Button
-              >
-            </div>
+          <div class="flex flex-col gap-2.5 pt-3">
             <div
-              class="flex flex-wrap justify-between gap-x-4 gap-y-1 text-sm text-muted-foreground"
+              class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 sm:grid-cols-[minmax(0,11rem)_auto_minmax(0,1fr)]"
+              role="group"
+              aria-label="Release filters"
             >
-              <p role="status" aria-live="polite" aria-atomic="true">
-                {{
-                  isLoadingAny
-                    ? `${filteredReleases.length} releases · ${reposProcessed}${reposTotal ? ` of ${reposTotal}` : ''} projects checked…`
-                    : `${filteredReleases.length} ${filteredReleases.length === 1 ? 'release' : 'releases'} from ${projectCount} ${projectCount === 1 ? 'project' : 'projects'}`
-                }}
-              </p>
-              <p
-                title="Up to nine recent releases from each repository plus its latest stable release, published within the past three months. Full histories are available on GitHub."
-              >
-                Last 3 months · up to 9 recent releases per project
-              </p>
+              <div class="min-w-0">
+                <RepositoryFilter v-model="selectedRepository" :repositories="repositoryOptions" />
+              </div>
+              <div class="flex items-center gap-1">
+                <ReleaseFilters v-model="releaseType" />
+                <Button
+                  v-if="hasFilters"
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Reset filters"
+                  title="Reset filters"
+                  @click="resetFilters"
+                  ><Icon name="lucide:rotate-ccw"
+                /></Button>
+              </div>
+              <FeedSearch
+                id="release-search"
+                v-model="searchQuery"
+                v-model:scope="searchScope"
+                class="col-span-2 sm:col-span-1"
+                :searching="isSearching || searchingNotes"
+              />
             </div>
+            <p
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              class="text-xs text-muted-foreground"
+              title="Projects with releases in the last three months. Up to nine recent releases per repository plus its latest stable release; full histories are available on GitHub."
+            >
+              {{
+                isLoadingAny
+                  ? `${filteredReleases.length} releases · ${reposProcessed}${reposTotal ? ` of ${reposTotal}` : ''} projects checked…`
+                  : `${filteredReleases.length} ${filteredReleases.length === 1 ? 'release' : 'releases'} from ${projectCount} ${projectCount === 1 ? 'project' : 'projects'}`
+              }}
+              <span aria-hidden="true"> · Last 3 months</span>
+              <span class="sr-only">
+                in the last three months, up to nine recent releases per repository plus its latest
+                stable release.</span
+              >
+            </p>
           </div>
           <div
             v-if="searchScope === 'notes' && debouncedSearchQuery.trim() && missingNotesCount"

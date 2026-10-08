@@ -16,13 +16,23 @@ Der ausdrücklich gewählte Modus **Release notes** durchsucht den Inhalt der No
 
 Repo-Auswahl, Release-Typ und Suche wirken gemeinsam. Ergebniszahl, Zurücksetzen, Notes-Abruf und leerer Zustand berücksichtigen dieselbe Auswahl.
 
+## Kompakte Filterleiste
+
+Die erste Umsetzung machte aus den Filtern einen Formularblock: sichtbare Labels und Hilfstexte, eine eigene Typzeile und zwei Metadatenzeilen. Das gab den Werkzeugen zu viel Gewicht gegenüber den Releases.
+
+Repo, Typ und Suche teilen sich jetzt ab 640 Pixel Bildschirmbreite eine 36 Pixel hohe Zeile mit gemeinsamen Kanten. Die zugänglichen Namen bleiben erhalten. Erläuterungen zur Suche stehen im geöffneten Suchmenü. Die Ergebniszahl und das Zeitfenster bilden eine einzelne dezente Zeile darunter. Unter 768 Pixel ersetzt ein Typmenü die breite Toggle-Gruppe; unter 640 Pixel nimmt die Suche eine eigene volle Zeile ein. Zurücksetzen erscheint als Icon nur bei aktiven Filtern.
+
+Bei 1280 Pixel Bildschirmbreite sank die Höhe des gesamten Filterbereichs einschließlich Ergebniszahl von 200,25 auf 74 Pixel. [Vorher](feed-toolbar-before.png) und [nachher](feed-toolbar-desktop.png) zeigen denselben Feed mit Testdaten.
+
 ## Prüfung
 
 `bun run check` besteht mit 48 Tests; der Produktionsbuild besteht ebenfalls. Neue Regressionstests wurden mit gezielten Fehlern rot geprüft: Titel-Treffer verändern sich durch nachgeladene Notes nicht, Repo-Auswahl wirkt zusammen mit Release-Typ und Notes-Suche, Notes-Suche findet keine Versionsnamen, der Treffer-Ausschnitt zeigt eine versteckte Fundstelle, und Repo-Optionen unterscheiden gleichnamige Projekte verschiedener Owner ohne Duplikate. Der bisherige allgemeine Suchtest wurde an den absichtlich eingeschränkten Suchumfang angepasst.
 
 Im Browser wurde der Produktionsbuild mit API-Testdaten geprüft: Repo-Auswahl per Tastatur, Wechsel zwischen Titel- und Notes-Suche, kombinierte Filter, Zurücksetzen und 390 Pixel Bildschirmbreite ohne horizontalen Überlauf. Ein simulierter HTTP-503-Fehler zeigte vorhandene Treffer und 36 noch ungesuchte Notes; der erneute Abruf vervollständigte die Ergebnisse. Dies ersetzt keinen OAuth-Durchlauf mit einem echten Konto.
 
-Die [mobile Ansicht](repository-filter-mobile.png) zeigt die Repo-Auswahl mit Testdaten.
+Die kompakte Leiste wurde zusätzlich bei 320, 390, 640, 768 und 1280 Pixel Bildschirmbreite ohne horizontalen Überlauf geprüft, auch mit aktiven Filtern und ausgewähltem Repo. Mobile Typauswahl, Tastaturauswahl eines Repos, Notes-Suche und Zurücksetzen funktionieren im Produktionsbuild. Die helle und dunkle Darstellung wurde visuell geprüft. Für diese Layoutkorrektur wurden keine neuen Unit-Tests ergänzt; Browserprüfung deckt den visuellen Fehler und die neue mobile Bedienung ab.
+
+Die [mobile Ansicht](repository-filter-mobile.png) zeigt die kompakte Leiste mit Testdaten.
 
 ## Nächste sinnvolle Erweiterungen
 

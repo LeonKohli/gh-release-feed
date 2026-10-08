@@ -14,12 +14,15 @@ const scope = defineModel<SearchScope>('scope', { default: 'titles' })
       :aria-label="
         scope === 'notes' ? 'Search release notes' : 'Search release titles and versions'
       "
-      :placeholder="
-        scope === 'notes' ? 'Security, breaking, #123…' : 'Title or version, e.g. v3.5…'
-      "
+      :placeholder="scope === 'notes' ? 'Search release notes…' : 'Search titles or versions…'"
       aria-describedby="release-search-hint"
       @update:model-value="model = String($event)"
     />
+    <span id="release-search-hint" class="sr-only">{{
+      scope === 'notes'
+        ? 'Search note content within your current filters. Missing notes load automatically.'
+        : 'Search release titles and versions. Choose Notes to search for a change.'
+    }}</span>
     <InputGroupAddon><Icon name="lucide:search" /></InputGroupAddon>
     <InputGroupAddon align="inline-end">
       <Icon
@@ -40,8 +43,20 @@ const scope = defineModel<SearchScope>('scope', { default: 'titles' })
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuRadioGroup v-model="scope">
-            <DropdownMenuRadioItem value="titles">Titles and versions</DropdownMenuRadioItem>
-            <DropdownMenuRadioItem value="notes">Release notes</DropdownMenuRadioItem>
+            <DropdownMenuRadioItem value="titles">
+              <span class="flex flex-col gap-0.5">
+                <span>Titles and versions</span>
+                <span class="text-xs text-muted-foreground">Find a specific release</span>
+              </span>
+            </DropdownMenuRadioItem>
+            <DropdownMenuRadioItem value="notes">
+              <span class="flex flex-col gap-0.5">
+                <span>Release notes</span>
+                <span class="text-xs text-muted-foreground"
+                  >Find changes, fixes or ticket numbers</span
+                >
+              </span>
+            </DropdownMenuRadioItem>
           </DropdownMenuRadioGroup>
         </DropdownMenuContent>
       </DropdownMenu>
