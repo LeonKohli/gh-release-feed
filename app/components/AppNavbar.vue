@@ -1,9 +1,7 @@
 <script setup lang="ts">
-import { useMediaQuery, useTimeAgo } from '@vueuse/core'
+import { useTimeAgo } from '@vueuse/core'
 
 const props = defineProps<{
-  searchQuery: string
-  isSearching: boolean
   isLoadingAny: boolean
   loadingState: string
   reposProcessed: number
@@ -12,21 +10,9 @@ const props = defineProps<{
   retryDisabled?: boolean
   retries: number
 }>()
-const emit = defineEmits<{ 'update:searchQuery': [string]; refresh: []; logout: [] }>()
+const emit = defineEmits<{ refresh: []; logout: [] }>()
 const { loggedIn } = useUserSession()
-const isSearchVisible = ref(false)
-const isMobile = useMediaQuery('(max-width: 639px)')
 const resetTime = useTimeAgo(computed(() => props.rateLimitResetAt || Date.now()))
-watch(isMobile, (mobile) => {
-  if (!mobile) isSearchVisible.value = false
-})
-async function toggleSearch() {
-  isSearchVisible.value = !isSearchVisible.value
-  if (isSearchVisible.value) {
-    await nextTick()
-    document.getElementById('mobile-release-search')?.focus()
-  }
-}
 </script>
 
 <template>
@@ -39,26 +25,6 @@ async function toggleSearch() {
         <h1 class="text-lg font-semibold">Release Feed</h1>
       </div>
       <div class="flex min-w-0 items-center gap-1 sm:gap-2">
-        <div v-if="loggedIn" class="hidden w-64 sm:block lg:w-80">
-          <FeedSearch
-            id="desktop-release-search"
-            :model-value="searchQuery"
-            :searching="isSearching"
-            @update:model-value="emit('update:searchQuery', $event)"
-          />
-        </div>
-        <Button
-          v-if="loggedIn"
-          variant="ghost"
-          size="icon"
-          class="sm:hidden"
-          :aria-label="isSearchVisible ? 'Hide search' : 'Show search'"
-          :aria-expanded="isSearchVisible"
-          aria-controls="mobile-search-panel"
-          @click="toggleSearch"
-        >
-          <Icon :name="isSearchVisible ? 'lucide:x' : 'lucide:search'" />
-        </Button>
         <AuthState v-slot="{ loggedIn, session }">
           <template v-if="loggedIn">
             <ClientOnly>
@@ -133,14 +99,6 @@ async function toggleSearch() {
           >
         </AuthState>
       </div>
-    </div>
-    <div v-if="loggedIn && isSearchVisible" id="mobile-search-panel" class="sm:hidden">
-      <FeedSearch
-        id="mobile-release-search"
-        :model-value="searchQuery"
-        :searching="isSearching"
-        @update:model-value="emit('update:searchQuery', $event)"
-      />
     </div>
   </header>
 </template>

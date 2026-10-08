@@ -2,7 +2,9 @@
 
 Track releases from your starred GitHub repositories. The app uses Nuxt 4, Vue 3, Pinia, Tailwind CSS 4, and shadcn-vue with Reka UI. GitHub OAuth and GraphQL requests run on the server; IndexedDB caches releases in the browser.
 
-Filter by **All**, **Stable**, or **Pre-releases**. The app remembers the release type on this browser and combines it with text search before grouping releases. Drafts are excluded. Search includes repository descriptions, owners, release names, tags, and loaded release notes. Use **Search all release notes** to include notes that have not been loaded yet.
+Choose a repository and filter by **All**, **Stable**, or **Pre-releases**. The repository picker searches project names, owners, and descriptions, and lists projects with releases in the current feed. The app remembers the release type on this browser. Drafts are excluded.
+
+Search finds release titles and versions by default. Choose **Notes** to find changes such as `security` or `breaking`. This mode loads missing notes within the selected repository and release type, marks matching text, and reports incomplete results with a retry action. See [repository filtering and search decisions](docs/feed-ux.md) for the UX review and suggested next features.
 
 Hover over a repository name for a preview, or use its **About** button with a mouse, keyboard, or touch screen. The preview includes the description, language, stars, forks, archive status, license, and links. Expand long release notes to read them in the page without a separate scroll area.
 
@@ -64,7 +66,7 @@ Review major-version migration notes, then run the checks above. shadcn componen
 bunx --bun shadcn-vue@latest diff
 ```
 
-Installed components live in `app/components/ui/`, including the feed's `toggle-group`, `hover-card`, `popover`, `input-group`, and `empty` components. Review local customizations before using `add <component> --overwrite`. Keep aliases and the New York style in `components.json`; theme tokens live in `app/assets/css/tailwind.css`.
+Installed components live in `app/components/ui/`, including the feed's `toggle-group`, `hover-card`, `popover`, `combobox`, `input-group`, and `empty` components. Review local customizations before using `add <component> --overwrite`. Keep aliases and the New York style in `components.json`; theme tokens live in `app/assets/css/tailwind.css`.
 
 The lint and format setup follows the local `copy4ai-page` project; CI follows `ccurio`. This repo uses correctness rules rather than importing Copy4AI's design restrictions.
 

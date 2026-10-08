@@ -8,7 +8,12 @@ import {
   useNow,
   useIntervalFn,
 } from '@vueuse/core'
-import { filterReleases, isReleaseType } from '~/lib/release-filters'
+import {
+  filterReleases,
+  getRepositoryOptions,
+  isReleaseType,
+  type SearchScope,
+} from '~/lib/release-filters'
 
 const { loggedIn, clear, ready } = useUserSession()
 const {
@@ -31,6 +36,9 @@ const now = useNow({ scheduler: (callback) => useIntervalFn(callback, 1000) })
 const retryDisabled = computed(() => !!retryAt.value && retryAt.value > now.value.getTime())
 const page = ref(1)
 const perPage = 20
+const selectedRepository = ref<string | null>(null)
+const searchScope = ref<SearchScope>('titles')
+const repositoryOptions = computed(() => getRepositoryOptions(releases.value))
 const searchQuery = ref('')
 const debouncedSearchQuery = refDebounced(searchQuery, 200)
 const isSearching = computed(() => searchQuery.value !== debouncedSearchQuery.value)
@@ -42,9 +50,14 @@ const releaseType = computed({
   },
 })
 const filteredReleases = computed(() =>
-  filterReleases(releases.value, releaseType.value, debouncedSearchQuery.value),
+  filterReleases(releases.value, releaseType.value, debouncedSearchQuery.value, {
+    repositoryId: selectedRepository.value,
+    searchIn: searchScope.value,
+  }),
 )
-const searchableReleases = computed(() => filterReleases(releases.value, releaseType.value, ''))
+const searchableReleases = computed(() =>
+  filterReleases(releases.value, releaseType.value, '', { repositoryId: selectedRepository.value }),
+)
 const missingNotesCount = computed(
   () => searchableReleases.value.filter((release) => !release.descriptionLoaded).length,
 )
@@ -57,18 +70,23 @@ async function searchAllNotes() {
     searchingNotes.value = false
   }
 }
+watch([debouncedSearchQuery, searchScope, searchableReleases], () => {
+  if (searchScope.value === 'notes' && debouncedSearchQuery.value.trim()) void searchAllNotes()
+})
 const releaseGroups = computed(() => groupReleases(filteredReleases.value))
 const visibleReleaseGroups = computed(() => releaseGroups.value.slice(0, page.value * perPage))
 const hasMoreReleases = computed(
   () => visibleReleaseGroups.value.length < releaseGroups.value.length,
 )
 const isLoadingAny = computed(() => loading.value || backgroundLoading.value)
-const hasFilters = computed(() => !!searchQuery.value || releaseType.value !== 'all')
+const hasFilters = computed(
+  () => !!searchQuery.value || !!selectedRepository.value || releaseType.value !== 'all',
+)
 const projectCount = computed(
   () => new Set(filteredReleases.value.map((release) => release.repo.id)).size,
 )
 const loadingState = computed(() => (isLoadingAny.value ? 'Loading releases' : 'Refresh releases'))
-watch([debouncedSearchQuery, releaseType], () => {
+watch([debouncedSearchQuery, releaseType, selectedRepository, searchScope], () => {
   page.value = 1
 })
 const loadMoreTrigger = ref<HTMLElement | null>(null)
@@ -82,6 +100,8 @@ watchDebounced(
 )
 function resetFilters() {
   searchQuery.value = ''
+  selectedRepository.value = null
+  searchScope.value = 'titles'
   releaseType.value = 'all'
 }
 const handleRefresh = useDebounceFn(async () => {
@@ -110,8 +130,6 @@ useHead({
   <div class="min-h-screen bg-background">
     <div class="mx-auto max-w-4xl px-4 sm:px-6">
       <AppNavbar
-        v-model:search-query="searchQuery"
-        :is-searching="isSearching"
         :is-loading-any="isLoadingAny"
         :loading-state="loadingState"
         :repos-processed="reposProcessed"
@@ -140,7 +158,32 @@ useHead({
           >
         </Card>
         <template v-else>
-          <div class="flex flex-col gap-3 pt-3">
+          <div class="flex flex-col gap-4 pt-3">
+            <FieldGroup class="grid gap-4 sm:grid-cols-2">
+              <Field>
+                <FieldLabel for="repository-filter">Repository</FieldLabel>
+                <RepositoryFilter v-model="selectedRepository" :repositories="repositoryOptions" />
+                <FieldDescription
+                  >Projects with releases in the last three months.</FieldDescription
+                >
+              </Field>
+              <Field>
+                <FieldLabel for="release-search">{{
+                  searchScope === 'notes' ? 'Search release notes' : 'Find a release'
+                }}</FieldLabel>
+                <FeedSearch
+                  id="release-search"
+                  v-model="searchQuery"
+                  v-model:scope="searchScope"
+                  :searching="isSearching || searchingNotes"
+                />
+                <FieldDescription id="release-search-hint">{{
+                  searchScope === 'notes'
+                    ? 'Find a change across notes in your current filters.'
+                    : 'Search titles and versions. Choose Notes to find a change.'
+                }}</FieldDescription>
+              </Field>
+            </FieldGroup>
             <div class="flex flex-wrap items-center justify-between gap-3">
               <ReleaseFilters v-model="releaseType" class="w-auto" />
               <Button v-if="hasFilters" variant="ghost" size="sm" @click="resetFilters"
@@ -163,22 +206,26 @@ useHead({
                 Last 3 months · up to 9 recent releases per project
               </p>
             </div>
-            <p v-if="searchQuery" class="text-sm text-muted-foreground">
-              Search: <span class="font-medium break-words text-foreground">{{ searchQuery }}</span>
-            </p>
           </div>
           <div
-            v-if="searchQuery && missingNotesCount"
+            v-if="searchScope === 'notes' && debouncedSearchQuery.trim() && missingNotesCount"
             class="flex flex-wrap items-center gap-2 text-sm text-muted-foreground"
           >
-            <p>{{ missingNotesCount }} releases have notes that haven't been searched yet.</p>
+            <p>
+              {{
+                searchingNotes
+                  ? 'Searching release notes…'
+                  : 'Some release notes could not be searched.'
+              }}
+              {{ missingNotesCount }} remaining.
+            </p>
             <Button
               variant="outline"
               size="sm"
               :disabled="searchingNotes || isLoadingAny || retryDisabled"
               @click="searchAllNotes"
             >
-              {{ searchingNotes ? 'Searching release notes…' : 'Search all release notes' }}
+              {{ searchingNotes ? 'Searching…' : 'Retry remaining notes' }}
             </Button>
           </div>
           <Alert v-if="error" variant="destructive">
@@ -221,6 +268,7 @@ useHead({
               :releases="group.releases"
               :description-errors="descriptionErrors"
               :retry-disabled="retryDisabled"
+              :note-search="searchScope === 'notes' ? debouncedSearchQuery : ''"
               @request-notes="ensureDescriptions"
             />
           </div>
@@ -228,11 +276,19 @@ useHead({
             <EmptyHeader>
               <EmptyMedia variant="icon"><Icon name="lucide:search" /></EmptyMedia>
               <EmptyTitle>{{
-                hasFilters ? 'No matching releases' : 'No recent releases'
+                searchingNotes
+                  ? 'Searching release notes…'
+                  : hasFilters
+                    ? 'No matching releases'
+                    : 'No recent releases'
               }}</EmptyTitle>
               <EmptyDescription>{{
                 hasFilters
-                  ? 'Try another search or release type.'
+                  ? searchingNotes
+                    ? 'Matching releases appear as their notes are searched.'
+                    : missingNotesCount && searchScope === 'notes' && searchQuery.trim()
+                      ? 'Results are incomplete. Retry the remaining notes or change your filters.'
+                      : 'Try another repository, search, or release type.'
                   : 'Your starred projects have no releases in the current three-month window. Star more projects or check their full release histories on GitHub.'
               }}</EmptyDescription>
             </EmptyHeader>

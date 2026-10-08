@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { format, intlFormatDistance } from 'date-fns'
 import { useElementVisibility } from '@vueuse/core'
+import { getNoteMatch } from '~/lib/release-filters'
 import type { ReleaseObj } from '~/composables/useGithub'
 
 const props = defineProps<{
   release?: ReleaseObj
   releases?: ReleaseObj[]
+  noteSearch?: string
   retryDisabled?: boolean
   descriptionErrors?: Record<string, string>
 }>()
@@ -27,6 +29,14 @@ const mainRelease = computed(() => {
   if (!release) throw new Error('A release card requires at least one release')
   return release
 })
+const noteMatches = computed(() =>
+  Object.fromEntries(
+    releases.value.map((release) => [
+      release.id,
+      getNoteMatch(release.descriptionHTML, props.noteSearch || ''),
+    ]),
+  ),
+)
 const expanded = ref<Record<string, boolean>>({})
 const overflowing = ref<Record<string, boolean>>({})
 const contentId = useId()
@@ -76,6 +86,13 @@ const relativeDate = computed(() =>
           <Badge v-if="release.isPrerelease" variant="secondary">Pre-release</Badge>
           <Badge v-if="release.isDraft" variant="outline">Draft</Badge>
         </div>
+        <p v-if="noteMatches[release.id]" class="text-sm text-muted-foreground">
+          {{ noteMatches[release.id]?.before
+          }}<mark class="rounded-sm bg-accent font-medium text-accent-foreground">{{
+            noteMatches[release.id]?.match
+          }}</mark
+          >{{ noteMatches[release.id]?.after }}
+        </p>
         <ClientOnly>
           <ReleaseContent
             v-if="release.descriptionHTML"

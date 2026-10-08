@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import type { SearchScope } from '~/lib/release-filters'
 defineProps<{ id: string; searching: boolean }>()
 const model = defineModel<string>({ default: '' })
+const scope = defineModel<SearchScope>('scope', { default: 'titles' })
 </script>
 
 <template>
@@ -9,8 +11,13 @@ const model = defineModel<string>({ default: '' })
       :id="id"
       :model-value="model"
       type="search"
-      aria-label="Search releases"
-      placeholder="Search repositories or releases…"
+      :aria-label="
+        scope === 'notes' ? 'Search release notes' : 'Search release titles and versions'
+      "
+      :placeholder="
+        scope === 'notes' ? 'Security, breaking, #123…' : 'Title or version, e.g. v3.5…'
+      "
+      aria-describedby="release-search-hint"
       @update:model-value="model = String($event)"
     />
     <InputGroupAddon><Icon name="lucide:search" /></InputGroupAddon>
@@ -24,6 +31,20 @@ const model = defineModel<string>({ default: '' })
       <InputGroupButton v-if="model" size="icon-xs" aria-label="Clear search" @click="model = ''"
         ><Icon name="lucide:x"
       /></InputGroupButton>
+      <DropdownMenu>
+        <DropdownMenuTrigger as-child>
+          <InputGroupButton aria-label="Search in" size="xs"
+            >{{ scope === 'notes' ? 'Notes' : 'Titles'
+            }}<Icon name="lucide:chevron-down" data-icon="inline-end"
+          /></InputGroupButton>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuRadioGroup v-model="scope">
+            <DropdownMenuRadioItem value="titles">Titles and versions</DropdownMenuRadioItem>
+            <DropdownMenuRadioItem value="notes">Release notes</DropdownMenuRadioItem>
+          </DropdownMenuRadioGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </InputGroupAddon>
   </InputGroup>
 </template>
