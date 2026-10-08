@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 const props = defineProps<{
   html: string
@@ -7,105 +7,54 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  'update:isExpanded': [boolean]
+  overflowChange: [boolean]
 }>()
 
 const contentRef = ref<HTMLElement | null>(null)
-const showToggle = ref(false)
-const maxHeight = 300 // Initial max height in pixels
+const hasOverflow = ref<boolean>()
+const maxHeight = 300
+let resizeObserver: ResizeObserver | undefined
 
-// Check if content needs toggle button
+function measureOverflow() {
+  if (!contentRef.value) return
+
+  const nextOverflow = contentRef.value.scrollHeight > maxHeight
+  if (nextOverflow !== hasOverflow.value) {
+    hasOverflow.value = nextOverflow
+    emit('overflowChange', nextOverflow)
+  }
+}
+
 onMounted(() => {
-  if (contentRef.value) {
-    const needsToggle = contentRef.value.scrollHeight > maxHeight
-    showToggle.value = needsToggle
-    if (needsToggle) {
-      emit('update:isExpanded', false)
-    }
-  }
+  measureOverflow()
+  resizeObserver = new ResizeObserver(measureOverflow)
+  if (contentRef.value) resizeObserver.observe(contentRef.value)
 })
 
-// Watch for external isExpanded changes
-watch(() => props.isExpanded, (newVal) => {
-  if (showToggle.value) {
-    emit('update:isExpanded', newVal)
-  }
-})
+onBeforeUnmount(() => resizeObserver?.disconnect())
 
-// Process content with enhanced formatting
-const processedContent = computed(() => {
-  let content = props.html
-
-  // Common styles
-  const linkBaseStyles = 'inline-flex items-center gap-1.5 text-xs font-mono bg-muted/30 hover:bg-primary/5 px-1.5 py-0.5 rounded-md no-underline border border-border/40 hover:border-primary/20 hover:text-primary transition-colors'
-
-  // Replace commit links with better formatting
-  content = content.replace(
-    /<a class="commit-link"[^>]*href="([^"]*)"[^>]*><tt>([^<]*)<\/tt><\/a>/g,
-    (_, href, hash) => `
-      <a href="${href}" target="_blank" rel="noopener" class="${linkBaseStyles}">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3 h-3">
-          <path d="M15 3v4a1 1 0 0 0 1 1h4"/>
-          <path d="M18 17h-7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4l5 5v7a2 2 0 0 1-2 2z"/>
-          <path d="M16 17v2a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h2"/>
-        </svg>
-        ${hash}
-      </a>
-    `
-  )
-
-  // Add anchor links to headings
-  content = content.replace(
-    /<h([1-6])>([^<]*)<\/h[1-6]>/g,
-    (_, level, text) => `
-      <h${level} class="flex items-center gap-2 group">
-        <span class="flex-1">${text}</span>
-        <a href="#${text.toLowerCase().replace(/[^a-z0-9]+/g, '-')}" class="no-underline transition-opacity opacity-0 group-hover:opacity-100">
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4 text-muted-foreground hover:text-primary">
-            <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
-            <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
-          </svg>
-        </a>
-      </h${level}>
-    `
-  )
-
-  // Enhance lists with better bullets and nesting
-  content = content
-    .replace(/<ul>/g, '<ul class="space-y-1">')
-    .replace(
-      /<li>/g,
-      '<li class="relative flex items-start gap-1"><span class="flex-shrink-0 select-none w-4 text-center mt-[0.15rem] text-[14px] leading-none text-foreground">›</span><div class="flex-1 min-w-0">'
-    )
-    .replace(/<\/li>/g, '</div></li>')
-    .replace(/<ul><li/g, '<ul><li data-depth="1"')
-    .replace(/<ul><ul><li/g, '<ul><ul><li data-depth="2"')
-
-  return content
-})
+watch(() => props.html, measureOverflow, { flush: 'post' })
 
 const contentStyle = computed(() => ({
-  maxHeight: props.isExpanded ? '400px' : `${maxHeight}px`,
+  maxHeight: props.isExpanded ? 'none' : `${maxHeight}px`,
 }))
 
-const shouldShowGradient = computed(() => {
-  return showToggle.value && !props.isExpanded
-})
+const shouldShowGradient = computed(() => hasOverflow.value && !props.isExpanded)
 </script>
 
 <template>
   <div class="relative">
-    <div 
+    <div
       ref="contentRef"
-      class="release-content bg-card/50 rounded-lg p-3 sm:p-4 transition-[max-height] duration-300 ease-in-out"
+      class="release-content rounded-lg bg-card/50 p-3 transition-[max-height] duration-300 ease-in-out sm:p-4"
       :class="{
-        'overflow-y-auto': isExpanded,
+        'overflow-visible': isExpanded,
         'overflow-hidden': !isExpanded,
         'with-gradient': shouldShowGradient,
-        'scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent hover:scrollbar-thumb-border/80': isExpanded
       }"
       :style="contentStyle"
-      v-html="processedContent"
+      @load.capture="measureOverflow"
+      v-html="html"
     />
   </div>
 </template>
@@ -120,19 +69,6 @@ const shouldShowGradient = computed(() => {
 
 .release-content.with-gradient {
   mask-image: linear-gradient(to bottom, black calc(100% - 60px), transparent);
-}
-
-/* Scrollbar styles */
-.scrollbar-thin {
-  scrollbar-width: thin;
-}
-
-.scrollbar-thumb-border {
-  scrollbar-color: var(--border) transparent;
-}
-
-.scrollbar-track-transparent {
-  scrollbar-track-color: transparent;
 }
 
 /* Headings */
@@ -157,20 +93,35 @@ const shouldShowGradient = computed(() => {
   margin-top: 0;
 }
 
-.release-content :deep(h1) { font-size: 1.25rem; }
+.release-content :deep(h1) {
+  font-size: 1.25rem;
+}
 .release-content :deep(h2) {
   font-size: 1.125rem;
   border-bottom: 1px solid rgb(from var(--color-border) r g b / 0.6);
   padding-bottom: 0.5rem;
 }
-.release-content :deep(h3) { font-size: 1rem; }
-.release-content :deep(h4) { font-size: 0.875rem; }
+.release-content :deep(h3) {
+  font-size: 1rem;
+}
+.release-content :deep(h4) {
+  font-size: 0.875rem;
+}
 
 /* Lists */
 .release-content :deep(ul),
 .release-content :deep(ol) {
   margin-top: 0.75rem;
   margin-bottom: 0.75rem;
+  padding-left: 1.25rem;
+}
+
+.release-content :deep(ul) {
+  list-style-type: disc;
+}
+
+.release-content :deep(ol) {
+  list-style-type: decimal;
 }
 
 .release-content :deep(ul ul),
@@ -187,25 +138,12 @@ const shouldShowGradient = computed(() => {
   line-height: 1.5;
 }
 
-.release-content :deep(li > div) {
-  line-height: 1.625;
-}
-
 .release-content :deep(li + li) {
   margin-top: 0.375rem;
 }
 
-/* List item bullets */
-.release-content :deep(li[data-depth="1"] > span) {
-  font-size: 14px;
-  color: rgb(from var(--color-foreground) r g b / 0.9);
-  content: "›";
-}
-
-.release-content :deep(li[data-depth="2"] > span) {
-  font-size: 12px;
-  color: rgb(from var(--color-foreground) r g b / 0.8);
-  content: "›";
+.release-content :deep(li::marker) {
+  color: var(--color-muted-foreground);
 }
 
 /* Paragraphs and text content */
@@ -288,7 +226,10 @@ const shouldShowGradient = computed(() => {
   border-radius: 0.375rem;
   text-decoration: none;
   border: 1px solid rgb(from var(--color-border) r g b / 0.4);
-  transition: background-color 150ms, border-color 150ms, color 150ms;
+  transition:
+    background-color 150ms,
+    border-color 150ms,
+    color 150ms;
   word-break: break-all;
 }
 
@@ -361,7 +302,7 @@ const shouldShowGradient = computed(() => {
   gap: 0.5rem;
 }
 
-.release-content :deep(.task-list-item input[type="checkbox"]) {
+.release-content :deep(.task-list-item input[type='checkbox']) {
   height: 0.875rem;
   width: 0.875rem;
   border-radius: 0.25rem;
@@ -370,15 +311,11 @@ const shouldShowGradient = computed(() => {
 }
 
 /* Nested content spacing */
-.release-content :deep(li > p:first-child),
-.release-content :deep(li > div > p:first-child) { margin-top: 0; }
+.release-content :deep(li > p:first-child) {
+  margin-top: 0;
+}
 
-.release-content :deep(li > p:last-child),
-.release-content :deep(li > div > p:last-child) { margin-bottom: 0; }
-
-.release-content :deep(li > div > ul:first-child),
-.release-content :deep(li > div > ol:first-child) { margin-top: 0.375rem; }
-
-.release-content :deep(li > div > ul:last-child),
-.release-content :deep(li > div > ol:last-child) { margin-bottom: 0; }
-</style> 
+.release-content :deep(li > p:last-child) {
+  margin-bottom: 0;
+}
+</style>

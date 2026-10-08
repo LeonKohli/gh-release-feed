@@ -3,11 +3,11 @@ import tailwindcss from '@tailwindcss/vite'
 // https://nuxt.com/docs/api/configuration/nuxt-config
 export default defineNuxtConfig({
   future: {
-    compatibilityVersion: 4
+    compatibilityVersion: 4,
   },
   compatibilityDate: '2025-10-11',
   nitro: {
-    preset: 'bun',
+    preset: process.env.NODE_ENV === 'production' ? 'bun' : undefined,
   },
   devtools: { enabled: true },
   modules: [
@@ -20,39 +20,40 @@ export default defineNuxtConfig({
     'shadcn-nuxt',
   ],
   auth: {
-    loadStrategy: 'client-only'
+    loadStrategy: 'client-only',
   },
   css: ['~/assets/css/tailwind.css'],
   colorMode: {
     classPrefix: '',
-    classSuffix: ''
+    classSuffix: '',
   },
   shadcn: {
     prefix: '',
-    componentDir: '~/components/ui'
+    componentDir: '~/components/ui',
   },
   runtimeConfig: {
     oauth: {
       github: {
         clientId: process.env.GITHUB_CLIENT_ID,
         clientSecret: process.env.GITHUB_CLIENT_SECRET,
-      }
-    }
+      },
+    },
   },
   app: {
     head: {
-      script: process.env.NODE_ENV === 'production' ? [
-        {
-          src: 'https://um.web.leonkohli.de/script.js',
-          defer: true,
-          'data-website-id': '09e0d0fa-3476-43e7-ba6c-16b3d636d76d'
-        }
-      ] : []
-    }
+      script:
+        process.env.NODE_ENV === 'production'
+          ? [
+              {
+                src: 'https://um.web.leonkohli.de/script.js',
+                defer: true,
+                'data-website-id': '09e0d0fa-3476-43e7-ba6c-16b3d636d76d',
+              },
+            ]
+          : [],
+    },
   },
   vite: {
-    plugins: [
-      tailwindcss(),
-    ],
+    plugins: [tailwindcss()],
   },
 })

@@ -1,13 +1,13 @@
 export default defineOAuthGitHubEventHandler({
   config: {
     emailRequired: true,
-    scope: ['read:user', 'user:email', 'read:org'] // Only using read scopes
+    scope: ['read:user', 'user:email', 'read:org'], // Only using read scopes
   },
   async onSuccess(event, { user, tokens }) {
     if (!user?.email) {
       throw createError({
         statusCode: 400,
-        statusMessage: 'Email is required'
+        statusMessage: 'Email is required',
       })
     }
 
@@ -19,9 +19,9 @@ export default defineOAuthGitHubEventHandler({
         email: user.email,
         name: user.name || user.login,
         avatarUrl: user.avatar_url,
-        accessToken: tokens.access_token
+        accessToken: tokens.access_token,
       },
-      loggedInAt: new Date()
+      loggedInAt: new Date(),
     })
 
     // Avoid logging sensitive session data like access tokens
@@ -32,5 +32,5 @@ export default defineOAuthGitHubEventHandler({
   onError(event, error) {
     console.error('GitHub OAuth error:', error)
     return sendRedirect(event, '/login?error=github_oauth_failed')
-  }
+  },
 })

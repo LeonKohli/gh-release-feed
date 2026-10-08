@@ -36,7 +36,9 @@ export default defineEventHandler(async (event) => {
   const ttlSeconds = Number(process.env.GITHUB_DETAILS_TTL ?? '600')
 
   const cacheKeys = ids.map((id) => `gh:release-details:${user.id}:${encodeURIComponent(id)}`)
-  const cachedEntries = await Promise.all(cacheKeys.map((k) => storage.getItem<DetailsCacheEntry>(k)))
+  const cachedEntries = await Promise.all(
+    cacheKeys.map((k) => storage.getItem<DetailsCacheEntry>(k)),
+  )
 
   const items: Array<{ id: string; descriptionHTML: string }> = []
   const missingIds: string[] = []
@@ -65,14 +67,18 @@ export default defineEventHandler(async (event) => {
       request: { timeout: 45_000 },
       throttle: {
         onRateLimit: (retryAfter: number, options: any, octokitInstance: any) => {
-          octokitInstance.log.warn(`Request quota exhausted for request ${options.method} ${options.url}`)
+          octokitInstance.log.warn(
+            `Request quota exhausted for request ${options.method} ${options.url}`,
+          )
           if (options.request?.retryCount === 0) return true
         },
         onSecondaryRateLimit: (retryAfter: number, options: any, octokitInstance: any) => {
-          octokitInstance.log.warn(`SecondaryRateLimit detected for request ${options.method} ${options.url}`)
+          octokitInstance.log.warn(
+            `SecondaryRateLimit detected for request ${options.method} ${options.url}`,
+          )
           if (options.request?.retryCount === 0) return true
-        }
-      }
+        },
+      },
     })
 
     const QUERY = `
@@ -92,21 +98,29 @@ export default defineEventHandler(async (event) => {
         console.info(`[gh][details] cache MISS → fetching u=${user.id} ids=${missingIds.length}`)
         const data = await octokit.graphql<GraphQLNodesResponse>(QUERY, {
           ids: missingIds,
-          headers: { 'X-GitHub-Api-Version': '2022-11-28' }
+          headers: { 'X-GitHub-Api-Version': '2022-11-28' },
         })
 
         rateLimit = data.rateLimit
         const fetched = (data.nodes || [])
-          .filter((n): n is { id: string; descriptionHTML?: string } => !!n && typeof n.id === 'string')
+          .filter(
+            (n): n is { id: string; descriptionHTML?: string } => !!n && typeof n.id === 'string',
+          )
           .map((n) => ({ id: n.id, descriptionHTML: n.descriptionHTML || '' }))
 
         // Store individually for better reuse
         await Promise.all(
-          fetched.map((it) => storage.setItem(
-            `gh:release-details:${user.id}:${encodeURIComponent(it.id)}`,
-            { id: it.id, descriptionHTML: it.descriptionHTML, expiresAt: Date.now() + ttlSeconds * 1000 },
-            { ttl: ttlSeconds }
-          ))
+          fetched.map((it) =>
+            storage.setItem(
+              `gh:release-details:${user.id}:${encodeURIComponent(it.id)}`,
+              {
+                id: it.id,
+                descriptionHTML: it.descriptionHTML,
+                expiresAt: Date.now() + ttlSeconds * 1000,
+              },
+              { ttl: ttlSeconds },
+            ),
+          ),
         )
 
         items.push(...fetched)
@@ -125,13 +139,23 @@ export default defineEventHandler(async (event) => {
   }
 
   const fetchedCount = items.length - cacheHits
-  setResponseHeader(event, 'Cache-Control', `private, max-age=${ttlSeconds}, stale-while-revalidate=60`)
-  setResponseHeader(event, 'X-Cache-Details', `hits=${cacheHits};misses=${cacheMisses};fetched=${fetchedCount}`)
+  setResponseHeader(
+    event,
+    'Cache-Control',
+    `private, max-age=${ttlSeconds}, stale-while-revalidate=60`,
+  )
+  setResponseHeader(
+    event,
+    'X-Cache-Details',
+    `hits=${cacheHits};misses=${cacheMisses};fetched=${fetchedCount}`,
+  )
   if (rateLimit) {
     setResponseHeader(event, 'X-GH-RateLimit-Remaining', String(rateLimit.remaining))
     setResponseHeader(event, 'X-GH-RateLimit-Cost', String(rateLimit.cost))
     setResponseHeader(event, 'X-GH-RateLimit-ResetAt', String(rateLimit.resetAt))
-    console.info(`[gh][details] hits=${cacheHits} misses=${cacheMisses} fetched=${fetchedCount} rateLimit cost=${rateLimit.cost} remaining=${rateLimit.remaining} resetAt=${rateLimit.resetAt}`)
+    console.info(
+      `[gh][details] hits=${cacheHits} misses=${cacheMisses} fetched=${fetchedCount} rateLimit cost=${rateLimit.cost} remaining=${rateLimit.remaining} resetAt=${rateLimit.resetAt}`,
+    )
   } else {
     console.info(`[gh][details] hits=${cacheHits} misses=${cacheMisses} fetched=${fetchedCount}`)
   }

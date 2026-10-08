@@ -1,0 +1,19 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "semi": false,
+  "singleQuote": true,
+  "sortTailwindcss": {
+    "stylesheet": "./app/assets/css/tailwind.css",
+    "functions": ["cn", "cva"]
+  },
+  "ignorePatterns": [
+    ".nuxt/**",
+    ".output/**",
+    ".agents/**",
+    ".claude/**",
+    ".playwright-cli/**",
+    "bun.lock",
+    "AGENTS.md",
+    "CLAUDE.md"
+  ]
+}

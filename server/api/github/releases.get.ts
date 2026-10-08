@@ -24,10 +24,11 @@ interface GraphQLResponse {
 type CacheEntry = { data: GraphQLResponse; expiresAt: number }
 
 // In-flight coalescing map to dedupe concurrent identical fetches per user/cursor/page
-const inflight: Map<string, Promise<GraphQLResponse>> = (globalThis as any).__ghReleasesInflight || new Map()
+const inflight: Map<string, Promise<GraphQLResponse>> = (globalThis as any).__ghReleasesInflight ||
+new Map()
 ;(globalThis as any).__ghReleasesInflight = inflight
 
-function buildQuery (opts: { includeDescriptionHTML: boolean, releasesCount: number }) {
+function buildQuery(opts: { includeDescriptionHTML: boolean; releasesCount: number }) {
   const releaseFields = `
     fragment ReleaseFields on Release {
       id
@@ -48,7 +49,12 @@ function buildQuery (opts: { includeDescriptionHTML: boolean, releasesCount: num
       name
       url
       description
-      primaryLanguage { id name }
+      forkCount
+      visibility
+      isArchived
+      pushedAt
+      homepageUrl
+      primaryLanguage { id name color }
       owner { login avatarUrl url }
       stargazerCount
       languages(first: 5, orderBy: {field: SIZE, direction: DESC}) {
@@ -56,7 +62,8 @@ function buildQuery (opts: { includeDescriptionHTML: boolean, releasesCount: num
         edges { node { id name } }
       }
       licenseInfo { spdxId }
-      releases(first: ${opts.releasesCount}) {
+      latestRelease { ...ReleaseFields }
+      releases(first: ${opts.releasesCount}, orderBy: {field: CREATED_AT, direction: DESC}) {
         totalCount
         pageInfo { hasNextPage endCursor }
         edges { node { ...ReleaseFields } }
@@ -97,8 +104,11 @@ export default defineEventHandler(async (event) => {
   const cursor = rawCursor
   const requestedPageSize = Number(query.pageSize ?? 60)
   const pageSize = Math.min(Math.max(1, requestedPageSize), 100)
-  const withDetails = String(query.withDetails ?? 'false') === 'true'
-  const releasesCount = Math.min(Math.max(1, Number(process.env.GITHUB_RELEASES_PER_REPO ?? '3')), 10)
+  const withDetails = query.withDetails === 'true'
+  const releasesCount = Math.min(
+    Math.max(1, Number(process.env.GITHUB_RELEASES_PER_REPO ?? '3')),
+    10,
+  )
 
   const ThrottledOctokit = Octokit.plugin(throttling)
   const octokit = new ThrottledOctokit({
@@ -107,7 +117,9 @@ export default defineEventHandler(async (event) => {
     request: { timeout: 45_000 },
     throttle: {
       onRateLimit: (retryAfter: number, options: any, octokitInstance: any) => {
-        octokitInstance.log.warn(`Request quota exhausted for request ${options.method} ${options.url}`)
+        octokitInstance.log.warn(
+          `Request quota exhausted for request ${options.method} ${options.url}`,
+        )
         if (options.request?.retryCount === 0) {
           // only retries once
           octokitInstance.log.info(`Retrying after ${retryAfter} seconds!`)
@@ -115,31 +127,39 @@ export default defineEventHandler(async (event) => {
         }
       },
       onSecondaryRateLimit: (retryAfter: number, options: any, octokitInstance: any) => {
-        octokitInstance.log.warn(`SecondaryRateLimit detected for request ${options.method} ${options.url}`)
+        octokitInstance.log.warn(
+          `SecondaryRateLimit detected for request ${options.method} ${options.url}`,
+        )
         if (options.request?.retryCount === 0) {
           // only retries once
           octokitInstance.log.info(`Retrying after ${retryAfter} seconds!`)
           return true
         }
-      }
-    }
+      },
+    },
   })
 
   const storage = useStorage('cache')
   const ttlSeconds = Number(process.env.GITHUB_CACHE_TTL ?? '300')
-  const detailVariant = `${withDetails ? 'full' : 'light'}-${releasesCount}`
+  const detailVariant = `v3-${withDetails ? 'full' : 'light'}-${releasesCount}`
   const cacheKey = `gh:releases:${user.id}:${cursorKey}:${pageSize}:${detailVariant}`
   const now = Date.now()
   const cached = await storage.getItem<CacheEntry>(cacheKey)
   if (cached && cached.expiresAt > now) {
     setResponseHeader(event, 'X-Cache-Status', 'HIT')
-    setResponseHeader(event, 'Cache-Control', `private, max-age=${ttlSeconds}, stale-while-revalidate=60`)
+    setResponseHeader(
+      event,
+      'Cache-Control',
+      `private, max-age=${ttlSeconds}, stale-while-revalidate=60`,
+    )
     if (cached.data?.rateLimit) {
       setResponseHeader(event, 'X-GH-RateLimit-Remaining', String(cached.data.rateLimit.remaining))
       setResponseHeader(event, 'X-GH-RateLimit-Cost', String(cached.data.rateLimit.cost))
       setResponseHeader(event, 'X-GH-RateLimit-ResetAt', String(cached.data.rateLimit.resetAt))
     }
-    console.info(`[gh][releases] cache HIT u=${user.id} cursor=${cursor ?? ''} pageSize=${pageSize} details=${withDetails} ttl=${ttlSeconds}`)
+    console.info(
+      `[gh][releases] cache HIT u=${user.id} cursor=${cursor ?? ''} pageSize=${pageSize} details=${withDetails} ttl=${ttlSeconds}`,
+    )
     return cached.data
   }
 
@@ -147,8 +167,14 @@ export default defineEventHandler(async (event) => {
   const existing = inflight.get(cacheKey)
   if (existing) {
     setResponseHeader(event, 'X-Cache-Status', 'COALESCE')
-    setResponseHeader(event, 'Cache-Control', `private, max-age=${ttlSeconds}, stale-while-revalidate=60`)
-    console.info(`[gh][releases] inflight COALESCE u=${user.id} cursor=${cursor ?? ''} pageSize=${pageSize} details=${withDetails}`)
+    setResponseHeader(
+      event,
+      'Cache-Control',
+      `private, max-age=${ttlSeconds}, stale-while-revalidate=60`,
+    )
+    console.info(
+      `[gh][releases] inflight COALESCE u=${user.id} cursor=${cursor ?? ''} pageSize=${pageSize} details=${withDetails}`,
+    )
     const data = await existing
     if (data?.rateLimit) {
       setResponseHeader(event, 'X-GH-RateLimit-Remaining', String(data.rateLimit.remaining))
@@ -165,7 +191,9 @@ export default defineEventHandler(async (event) => {
     try {
       // Optional API version header for stability
       const queryStr = buildQuery({ includeDescriptionHTML: withDetails, releasesCount })
-      console.info(`[gh][releases] cache MISS → fetching u=${user.id} cursor=${cursor ?? ''} pageSize=${pageSize} details=${withDetails}`)
+      console.info(
+        `[gh][releases] cache MISS → fetching u=${user.id} cursor=${cursor ?? ''} pageSize=${pageSize} details=${withDetails}`,
+      )
       const promise = (async () => {
         const data = await octokit.graphql<GraphQLResponse>(queryStr, {
           cursor,
@@ -173,7 +201,11 @@ export default defineEventHandler(async (event) => {
           headers: { 'X-GitHub-Api-Version': '2022-11-28' },
           // request timeout is configured on the client; no manual AbortController
         })
-        await storage.setItem(cacheKey, { data, expiresAt: Date.now() + ttlSeconds * 1000 }, { ttl: ttlSeconds })
+        await storage.setItem(
+          cacheKey,
+          { data, expiresAt: Date.now() + ttlSeconds * 1000 },
+          { ttl: ttlSeconds },
+        )
         return data
       })()
       inflight.set(cacheKey, promise)
@@ -181,12 +213,18 @@ export default defineEventHandler(async (event) => {
         const data = await promise
         // Cache for a moderate time to reduce bursts (private per user via cookies)
         setResponseHeader(event, 'X-Cache-Status', 'MISS')
-        setResponseHeader(event, 'Cache-Control', `private, max-age=${ttlSeconds}, stale-while-revalidate=60`)
+        setResponseHeader(
+          event,
+          'Cache-Control',
+          `private, max-age=${ttlSeconds}, stale-while-revalidate=60`,
+        )
         if (data?.rateLimit) {
           setResponseHeader(event, 'X-GH-RateLimit-Remaining', String(data.rateLimit.remaining))
           setResponseHeader(event, 'X-GH-RateLimit-Cost', String(data.rateLimit.cost))
           setResponseHeader(event, 'X-GH-RateLimit-ResetAt', String(data.rateLimit.resetAt))
-          console.info(`[gh][releases] rateLimit cost=${data.rateLimit.cost} remaining=${data.rateLimit.remaining} resetAt=${data.rateLimit.resetAt}`)
+          console.info(
+            `[gh][releases] rateLimit cost=${data.rateLimit.cost} remaining=${data.rateLimit.remaining} resetAt=${data.rateLimit.resetAt}`,
+          )
         }
         return data
       } finally {
@@ -219,7 +257,8 @@ export default defineEventHandler(async (event) => {
       // Rate limit / abuse detection
       if (status === 403 && (/rate limit/i.test(message) || /secondary rate/i.test(message))) {
         // Try to surface a friendlier 429 to the client
-        const reset = err?.headers?.['x-ratelimit-reset'] || err?.response?.headers?.['x-ratelimit-reset']
+        const reset =
+          err?.headers?.['x-ratelimit-reset'] || err?.response?.headers?.['x-ratelimit-reset']
         let statusMessage = 'GitHub API rate limit exceeded.'
         if (reset) {
           const resetDate = new Date(parseInt(reset) * 1000)
@@ -243,7 +282,7 @@ export default defineEventHandler(async (event) => {
       // Fallback: surface useful status & message
       throw createError({
         statusCode: status || 500,
-        statusMessage: message
+        statusMessage: message,
       })
     }
   }

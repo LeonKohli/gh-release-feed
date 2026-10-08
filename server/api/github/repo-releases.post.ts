@@ -18,7 +18,12 @@ interface RepositoryNode {
   name: string
   url: string
   description: string | null
-  primaryLanguage: { id: string; name: string } | null
+  forkCount: number
+  visibility: 'PUBLIC' | 'PRIVATE' | 'INTERNAL'
+  isArchived: boolean
+  pushedAt: string | null
+  homepageUrl: string | null
+  primaryLanguage: { id: string; name: string; color: string | null } | null
   owner: { login: string; avatarUrl: string; url: string }
   stargazerCount: number
   languages: {
@@ -26,6 +31,7 @@ interface RepositoryNode {
     edges: Array<{ node: { id: string; name: string } }>
   }
   licenseInfo: { spdxId: string } | null
+  latestRelease?: ReleaseNode | null
   releases: {
     totalCount: number
     pageInfo: { hasNextPage: boolean; endCursor: string | null }
@@ -55,7 +61,12 @@ export default defineEventHandler(async (event) => {
   const user = session.user!
   const accessToken = session.user.accessToken!
 
-  const body = await readBody<{ repoId?: string; cursor?: string | null; limit?: number; withDetails?: boolean }>(event)
+  const body = await readBody<{
+    repoId?: string
+    cursor?: string | null
+    limit?: number
+    withDetails?: boolean
+  }>(event)
   const repoId = body?.repoId
   if (!repoId) {
     throw createError({ statusCode: 400, statusMessage: 'Missing repoId' })
@@ -68,12 +79,16 @@ export default defineEventHandler(async (event) => {
   const storage = useStorage('cache')
   const ttlSeconds = Number(process.env.GITHUB_REPO_RELEASES_TTL ?? '180')
   const cursorKey = cursor ? encodeURIComponent(cursor) : 'root'
-  const variant = `${withDetails ? 'full' : 'light'}-${limit}`
+  const variant = `v3-${withDetails ? 'full' : 'light'}-${limit}`
   const cacheKey = `gh:repo-releases:${user.id}:${encodeURIComponent(repoId)}:${cursorKey}:${variant}`
   const now = Date.now()
   const cached = await storage.getItem<CacheEntry>(cacheKey)
   if (cached && cached.expiresAt > now) {
-    setResponseHeader(event, 'Cache-Control', `private, max-age=${ttlSeconds}, stale-while-revalidate=60`)
+    setResponseHeader(
+      event,
+      'Cache-Control',
+      `private, max-age=${ttlSeconds}, stale-while-revalidate=60`,
+    )
     setResponseHeader(event, 'X-Cache-Status', 'HIT')
     const rateLimit = cached.data?.rateLimit
     if (rateLimit) {
@@ -81,7 +96,9 @@ export default defineEventHandler(async (event) => {
       setResponseHeader(event, 'X-GH-RateLimit-Cost', String(rateLimit.cost))
       setResponseHeader(event, 'X-GH-RateLimit-ResetAt', String(rateLimit.resetAt))
     }
-    console.info(`[gh][repo] cache HIT u=${user.id} repo=${repoId} cursor=${cursor ?? ''} limit=${limit} details=${withDetails} ttl=${ttlSeconds}`)
+    console.info(
+      `[gh][repo] cache HIT u=${user.id} repo=${repoId} cursor=${cursor ?? ''} limit=${limit} details=${withDetails} ttl=${ttlSeconds}`,
+    )
     return cached.data
   }
 
@@ -92,14 +109,18 @@ export default defineEventHandler(async (event) => {
     request: { timeout: 45_000 },
     throttle: {
       onRateLimit: (retryAfter: number, options: any, octokitInstance: any) => {
-        octokitInstance.log.warn(`Request quota exhausted for request ${options.method} ${options.url}`)
+        octokitInstance.log.warn(
+          `Request quota exhausted for request ${options.method} ${options.url}`,
+        )
         if (options.request?.retryCount === 0) return true
       },
       onSecondaryRateLimit: (retryAfter: number, options: any, octokitInstance: any) => {
-        octokitInstance.log.warn(`SecondaryRateLimit detected for request ${options.method} ${options.url}`)
+        octokitInstance.log.warn(
+          `SecondaryRateLimit detected for request ${options.method} ${options.url}`,
+        )
         if (options.request?.retryCount === 0) return true
-      }
-    }
+      },
+    },
   })
 
   const releaseFields = `
@@ -119,13 +140,18 @@ export default defineEventHandler(async (event) => {
   const query = `
     ${releaseFields}
     query($repoId: ID!, $first: Int!, $cursor: String) {
-      node(id: $repoId) {
+      repository: node(id: $repoId) {
         ... on Repository {
           id
           name
           url
           description
-          primaryLanguage { id name }
+          forkCount
+          visibility
+          isArchived
+          pushedAt
+          homepageUrl
+          primaryLanguage { id name color }
           owner { login avatarUrl url }
           stargazerCount
           languages(first: 5, orderBy: {field: SIZE, direction: DESC}) {
@@ -133,6 +159,7 @@ export default defineEventHandler(async (event) => {
             edges { node { id name } }
           }
           licenseInfo { spdxId }
+          latestRelease { ...ReleaseFields }
           releases(first: $first, after: $cursor, orderBy: {field: CREATED_AT, direction: DESC}) {
             totalCount
             pageInfo { hasNextPage endCursor }
@@ -148,22 +175,34 @@ export default defineEventHandler(async (event) => {
   let delay = 200
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      console.info(`[gh][repo] cache MISS → fetching u=${user.id} repo=${repoId} cursor=${cursor ?? ''} limit=${limit} details=${withDetails}`)
+      console.info(
+        `[gh][repo] cache MISS → fetching u=${user.id} repo=${repoId} cursor=${cursor ?? ''} limit=${limit} details=${withDetails}`,
+      )
       const data = await octokit.graphql<RepositoryReleasesResponse>(query, {
         repoId,
         first: limit,
         cursor,
-        headers: { 'X-GitHub-Api-Version': '2022-11-28' }
+        headers: { 'X-GitHub-Api-Version': '2022-11-28' },
       })
-      setResponseHeader(event, 'Cache-Control', `private, max-age=${ttlSeconds}, stale-while-revalidate=60`)
+      setResponseHeader(
+        event,
+        'Cache-Control',
+        `private, max-age=${ttlSeconds}, stale-while-revalidate=60`,
+      )
       setResponseHeader(event, 'X-Cache-Status', 'MISS')
       if (data?.rateLimit) {
         setResponseHeader(event, 'X-GH-RateLimit-Remaining', String(data.rateLimit.remaining))
         setResponseHeader(event, 'X-GH-RateLimit-Cost', String(data.rateLimit.cost))
         setResponseHeader(event, 'X-GH-RateLimit-ResetAt', String(data.rateLimit.resetAt))
-        console.info(`[gh][repo] rateLimit cost=${data.rateLimit.cost} remaining=${data.rateLimit.remaining} resetAt=${data.rateLimit.resetAt}`)
+        console.info(
+          `[gh][repo] rateLimit cost=${data.rateLimit.cost} remaining=${data.rateLimit.remaining} resetAt=${data.rateLimit.resetAt}`,
+        )
       }
-      await storage.setItem(cacheKey, { data, expiresAt: Date.now() + ttlSeconds * 1000 }, { ttl: ttlSeconds })
+      await storage.setItem(
+        cacheKey,
+        { data, expiresAt: Date.now() + ttlSeconds * 1000 },
+        { ttl: ttlSeconds },
+      )
       return data
     } catch (err: any) {
       const status = err?.status || err?.response?.status
@@ -183,7 +222,8 @@ export default defineEventHandler(async (event) => {
       }
 
       if (status === 403 && (/rate limit/i.test(message) || /secondary rate/i.test(message))) {
-        const reset = err?.headers?.['x-ratelimit-reset'] || err?.response?.headers?.['x-ratelimit-reset']
+        const reset =
+          err?.headers?.['x-ratelimit-reset'] || err?.response?.headers?.['x-ratelimit-reset']
         let statusMessage = 'GitHub API rate limit exceeded.'
         if (reset) {
           const resetDate = new Date(parseInt(reset) * 1000)

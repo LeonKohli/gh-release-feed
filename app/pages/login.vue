@@ -1,20 +1,22 @@
 <template>
-  <div class="flex items-center justify-center min-h-screen bg-background">
-    <Card class="w-full max-w-md mx-4">
+  <div class="flex min-h-screen items-center justify-center bg-background">
+    <Card class="mx-4 w-full max-w-md">
       <CardHeader>
         <CardTitle>Sign in</CardTitle>
-        <CardDescription>Choose your sign in method</CardDescription>
+        <CardDescription
+          >Sign in to browse releases from your starred repositories.</CardDescription
+        >
       </CardHeader>
       <CardContent>
         <div v-if="error" class="mb-4">
           <Alert variant="destructive">
-            <Icon name="mdi:alert-circle" class="w-4 h-4" />
+            <Icon name="lucide:circle-alert" class="h-4 w-4" />
             <AlertTitle>Error</AlertTitle>
             <AlertDescription>{{ error }}</AlertDescription>
           </Alert>
         </div>
         <Button class="w-full" @click="signInWithGithub">
-          <Icon name="mdi:github" class="w-4 h-4 mr-2" />
+          <Icon name="lucide:github" class="mr-2 h-4 w-4" />
           Continue with GitHub
         </Button>
       </CardContent>
