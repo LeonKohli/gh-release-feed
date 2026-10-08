@@ -92,3 +92,11 @@ bun run .output/server/index.mjs
 ```
 
 The production Nitro preset is Bun. Supply OAuth credentials and the session password through the server environment. Nuxt's production server does not load `.env` files automatically; use `NUXT_OAUTH_GITHUB_CLIENT_ID` and `NUXT_OAUTH_GITHUB_CLIENT_SECRET` for runtime overrides.
+
+## Deploy
+
+The production app runs at [git-release.leonkohli.dev](https://git-release.leonkohli.dev) on Dokploy, application `web-gitrelease-yiot7o`. Pushes to `master` trigger a Railpack build. The GitHub repository's Vercel homepage is obsolete.
+
+Dokploy installs with `bun install --frozen-lockfile --ignore-scripts`, builds with `bun --bun run build`, and starts with `bun --bun run .output/server/index.mjs`. Keep OAuth credentials and the session password in the existing Dokploy environment. Check the deployment status and the public login page after a push.
+
+The feed uses GitHub's GraphQL release metadata for stable and prerelease filters. The existing Atom endpoints remain available, but the feed does not infer release types from version names.

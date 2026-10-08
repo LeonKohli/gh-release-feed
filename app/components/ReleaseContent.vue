@@ -1,10 +1,62 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import DOMPurify from 'isomorphic-dompurify'
 
 const props = defineProps<{
   html: string
   isExpanded?: boolean
 }>()
+
+const sanitizedHtml = computed(() =>
+  DOMPurify.sanitize(props.html, {
+    ALLOWED_TAGS: [
+      'p',
+      'br',
+      'b',
+      'i',
+      'em',
+      'strong',
+      'a',
+      'ul',
+      'ol',
+      'li',
+      'code',
+      'pre',
+      'blockquote',
+      'h1',
+      'h2',
+      'h3',
+      'h4',
+      'h5',
+      'h6',
+      'hr',
+      'img',
+      'table',
+      'thead',
+      'tbody',
+      'tr',
+      'th',
+      'td',
+      'span',
+      'div',
+      'details',
+      'summary',
+    ],
+    ALLOWED_ATTR: [
+      'href',
+      'src',
+      'alt',
+      'title',
+      'class',
+      'id',
+      'target',
+      'rel',
+      'width',
+      'height',
+    ],
+    ALLOW_DATA_ATTR: false,
+  }),
+)
 
 const emit = defineEmits<{
   overflowChange: [boolean]
@@ -54,7 +106,7 @@ const shouldShowGradient = computed(() => hasOverflow.value && !props.isExpanded
       }"
       :style="contentStyle"
       @load.capture="measureOverflow"
-      v-html="html"
+      v-html="sanitizedHtml"
     />
   </div>
 </template>

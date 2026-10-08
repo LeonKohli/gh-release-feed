@@ -9,6 +9,22 @@ afterEach(() => {
 })
 
 describe('ReleaseContent', () => {
+  it('preserves release markup while removing executable HTML', () => {
+    const wrapper = mount(ReleaseContent, {
+      props: {
+        html: '<h2>Changes</h2><p><strong>Fixed</strong> <a href="https://github.com/example/repo">details</a></p><script>alert(1)</script><img src="/release.png" onerror="alert(1)"><a href="javascript:alert(1)">unsafe</a><iframe src="https://example.com"></iframe>',
+      },
+    })
+
+    expect(wrapper.get('h2').text()).toBe('Changes')
+    expect(wrapper.get('strong').text()).toBe('Fixed')
+    expect(wrapper.get('a').attributes('href')).toBe('https://github.com/example/repo')
+    expect(wrapper.find('script').exists()).toBe(false)
+    expect(wrapper.find('iframe').exists()).toBe(false)
+    expect(wrapper.get('img').attributes('onerror')).toBeUndefined()
+    expect(wrapper.findAll('a')[1]?.attributes('href')).toBeUndefined()
+  })
+
   it.each([
     { initialHeight: 100, nextHeight: 600, expectedOverflow: true },
     { initialHeight: 600, nextHeight: 100, expectedOverflow: false },

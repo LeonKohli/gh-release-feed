@@ -18,9 +18,6 @@ const exactDate = computed(() => format(new Date(mainRelease.value.publishedAt),
 const relativeDate = computed(() =>
   intlFormatDistance(new Date(mainRelease.value.publishedAt), new Date()),
 )
-function sanitizeDescription(html: string) {
-  return html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-}
 </script>
 
 <template>
@@ -67,7 +64,7 @@ function sanitizeDescription(html: string) {
           <ReleaseContent
             v-if="release.descriptionHTML"
             :id="`${contentId}-${release.id}-notes`"
-            :html="sanitizeDescription(release.descriptionHTML)"
+            :html="release.descriptionHTML"
             :is-expanded="!!expanded[release.id]"
             @overflow-change="overflowing[release.id] = $event"
           />
