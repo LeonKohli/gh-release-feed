@@ -1,12 +1,6 @@
-// composables/useGithub.ts
 import { defineStore } from 'pinia'
 import { openDB, type IDBPDatabase } from 'idb'
-
-const BATCH_SIZES = {
-  API_FETCH: 100, // Number of repositories to fetch per API call
-  PROCESSING: 10, // Number of repositories to process in parallel
-  RELEASE_FETCH: 10, // Number of releases to fetch per repository
-} as const
+import { computed, onScopeDispose, ref, toRaw, watch } from 'vue'
 
 interface RepositoryNode {
   id: string
@@ -18,7 +12,7 @@ interface RepositoryNode {
   isArchived?: boolean
   pushedAt?: string | null
   homepageUrl?: string | null
-  languages: {
+  languages?: {
     totalCount: number
     edges: Array<{
       node: {
@@ -58,7 +52,7 @@ interface RepositoryNode {
         publishedAt: string
         updatedAt: string
         url: string
-        descriptionHTML: string | null
+        descriptionHTML?: string | null
       }
     }>
   }
@@ -86,406 +80,14 @@ interface GraphQLResponse {
   }
 }
 
-interface RepoReleasesResponse {
-  repository: RepositoryNode | null
-  rateLimit: {
-    cost: number
-    limit: number
-    remaining: number
-    resetAt: string
-    used: number
-  }
-}
-
-interface GithubReleasesDBSchema {
-  descriptions: {
-    key: string
-    value: string
-  }
-  releases: {
-    key: string
-    value: ReleaseObj & {
-      cachedAt: number
-    }
-  }
-  metadata: {
-    key: string
-    value: {
-      lastFetchTimestamp: number
-      etag?: string
-    }
-  }
-}
-
-const STALE_THRESHOLD = 5 * 60 * 1000 // 5 minutes in ms
-const METADATA_KEY = 'github-releases-metadata-v2'
-const ADDITIONAL_RELEASE_BATCH_SIZE = 3
-const MAX_ADDITIONAL_BATCHES_PER_REPO = 2
-
-// Helper types for release processing
-interface ReleaseProcessingOptions {
-  startDate: Date
-  db: IDBPDatabase<GithubReleasesDBSchema> | null
-  existingReleases: Map<string, ReleaseObj>
-}
-
-interface ProcessedResult {
-  release: ReleaseObj
-  isNew: boolean
-}
-
-// Shared helper functions
-const releaseProcessingHelpers = {
-  async processReleaseNode(
-    release: RepositoryNode['releases']['edges'][0]['node'],
-    repo: RepositoryNode,
-    options: ReleaseProcessingOptions,
-  ): Promise<ProcessedResult | null> {
-    const { startDate, db, existingReleases } = options
-
-    if (!release?.publishedAt) return null
-
-    const releaseDate = new Date(release.publishedAt)
-    const existingRelease = existingReleases.get(release.id)
-
-    if (releaseDate < startDate) return null
-
-    const releaseObj = {
-      id: release.id,
-      name: release.name || release.tagName,
-      tagName: release.tagName,
-      publishedAt: release.publishedAt,
-      url: release.url,
-      isDraft: release.isDraft,
-      isPrerelease: release.isPrerelease,
-      descriptionHTML: release.descriptionHTML || existingRelease?.descriptionHTML || '',
-      repo: {
-        id: repo.id,
-        name: repo.name,
-        url: repo.url,
-        description: repo.description || '',
-        forkCount: repo.forkCount,
-        visibility: repo.visibility,
-        isArchived: repo.isArchived,
-        pushedAt: repo.pushedAt,
-        homepageUrl: repo.homepageUrl,
-        stargazerCount: repo.stargazerCount,
-        owner: repo.owner,
-        primaryLanguage: repo.primaryLanguage,
-        languages: repo.languages,
-        licenseInfo: repo.licenseInfo,
-      },
-    }
-
-    if (db) {
-      const descriptionKey = `${release.id}-${release.publishedAt}`
-
-      // Handle description caching
-      if (releaseObj.descriptionHTML) {
-        await db.put('descriptions', releaseObj.descriptionHTML, descriptionKey)
-      } else {
-        const cachedDescription = await db.get('descriptions', descriptionKey)
-        if (cachedDescription) {
-          releaseObj.descriptionHTML = cachedDescription
-        }
-      }
-
-      // Cache the full release
-      await db.put('releases', {
-        ...releaseObj,
-        cachedAt: Date.now(),
-      })
-    }
-
-    return {
-      release: releaseObj,
-      isNew: !existingRelease,
-    }
-  },
-
-  sortReleases(releases: ReleaseObj[]): ReleaseObj[] {
-    return [...releases].sort(
-      (a, b) => new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime(),
-    )
-  },
-
-  async processResponseBatch(
-    batch: Array<{ node: RepositoryNode }>,
-    options: {
-      startDate: Date
-      db: IDBPDatabase<GithubReleasesDBSchema> | null
-      existingReleases: Map<string, ReleaseObj>
-      processedNodes: WeakMap<RepositoryNode, boolean>
-    },
-  ): Promise<{ newReleases: ReleaseObj[]; newCount: number }> {
-    const { startDate, db, existingReleases, processedNodes } = options
-
-    const batchResults = await Promise.all(
-      batch
-        .filter(({ node }) => !processedNodes.has(node))
-        .map(async ({ node: repo }) => {
-          if (!repo.releases?.edges) return []
-
-          processedNodes.set(repo, true)
-
-          const releaseNodes = [...repo.releases.edges]
-          if (
-            repo.latestRelease &&
-            !releaseNodes.some(({ node }) => node.id === repo.latestRelease?.id)
-          ) {
-            releaseNodes.push({ node: repo.latestRelease })
-          }
-          const processedReleases = await Promise.all(
-            releaseNodes.map(
-              async (edge) =>
-                await releaseProcessingHelpers.processReleaseNode(edge.node, repo, {
-                  startDate,
-                  db,
-                  existingReleases,
-                }),
-            ),
-          )
-
-          const validResults = processedReleases.filter(
-            (r): r is NonNullable<typeof r> => r !== null,
-          )
-          return validResults
-        }),
-    )
-
-    const flatResults = batchResults.flat()
-    const newCount = flatResults.filter((r) => r.isNew).length
-
-    flatResults.forEach(({ release }) => {
-      existingReleases.set(release.id, release)
-    })
-
-    return {
-      newReleases: flatResults.map((r) => r.release),
-      newCount,
-    }
-  },
-}
-
-export const useGithubStore = defineStore('github', {
-  state: () => ({
-    releases: [] as ReleaseObj[],
-    loading: false,
-    backgroundLoading: false,
-    error: null as string | null,
-    lastFetchTimestamp: null as number | null,
-    pageSize: 60,
-    db: null as IDBPDatabase<GithubReleasesDBSchema> | null,
-    reposProcessed: 0,
-    retries: 0,
-    rateLimitCost: 0,
-    rateLimitRemaining: 5000,
-    rateLimitResetAt: null as string | null,
-    cachedEtag: null as string | null,
-    cursor: null as string | null,
-    additionalReleaseCursors: {} as Record<string, string | null>,
-    additionalFetchQueue: [] as string[],
-    additionalFetchCounts: {} as Record<string, number>,
-    additionalFetchInProgress: false,
-  }),
-
-  actions: {
-    setError(error: any) {
-      this.error = error?.message || 'An unknown error occurred'
-      this.loading = false
-      this.backgroundLoading = false
-    },
-
-    clearData() {
-      this.releases = []
-      this.loading = false
-      this.backgroundLoading = false
-      this.error = null
-      this.lastFetchTimestamp = null
-      this.reposProcessed = 0
-      this.retries = 0
-      this.rateLimitCost = 0
-      this.additionalReleaseCursors = {}
-      this.additionalFetchQueue = []
-      this.additionalFetchCounts = {}
-      this.additionalFetchInProgress = false
-    },
-
-    async initDB() {
-      // Only initialize IndexedDB in the browser
-      if (import.meta.server) {
-        return
-      }
-
-      try {
-        this.db = await openDB<GithubReleasesDBSchema>('github-releases', 2, {
-          upgrade(db) {
-            // Create stores if they don't exist
-            if (!db.objectStoreNames.contains('descriptions')) {
-              db.createObjectStore('descriptions')
-            }
-
-            if (!db.objectStoreNames.contains('releases')) {
-              const releasesStore = db.createObjectStore('releases', {
-                keyPath: 'id',
-              })
-              releasesStore.createIndex('publishedAt', 'publishedAt')
-              releasesStore.createIndex('cachedAt', 'cachedAt')
-            }
-
-            if (!db.objectStoreNames.contains('metadata')) {
-              db.createObjectStore('metadata')
-            }
-          },
-        })
-
-        // Load metadata
-        const metadata = await this.db.get('metadata', METADATA_KEY)
-        if (metadata) {
-          this.lastFetchTimestamp = metadata.lastFetchTimestamp
-          this.cachedEtag = metadata.etag || null
-        }
-      } catch (error) {
-        console.error('Failed to initialize IndexedDB:', error)
-      }
-    },
-
-    async loadCachedReleases() {
-      if (import.meta.server) {
-        return false
-      }
-
-      if (!this.db) {
-        await this.initDB()
-      }
-      if (!this.db) return false
-      const db = this.db
-
-      try {
-        // Get all releases from IndexedDB
-        const allCachedReleases = await db.getAll('releases')
-        if (allCachedReleases.length > 0) {
-          // Sort by publishedAt descending
-          this.releases = releaseProcessingHelpers.sortReleases(
-            await Promise.all(
-              allCachedReleases.map(async ({ cachedAt: _cachedAt, ...release }) => ({
-                ...release,
-                descriptionHTML:
-                  release.descriptionHTML ||
-                  (await db.get('descriptions', `${release.id}-${release.publishedAt}`)) ||
-                  '',
-              })),
-            ),
-          )
-          return true
-        }
-      } catch (error) {
-        console.error('Error loading cached releases:', error)
-      }
-      return false
-    },
-
-    async updateMetadata() {
-      if (import.meta.server || !this.db) return
-      const fetchedAt = Date.now()
-      await this.db.put(
-        'metadata',
-        {
-          lastFetchTimestamp: fetchedAt,
-          etag: this.cachedEtag,
-        },
-        METADATA_KEY,
-      )
-      this.lastFetchTimestamp = fetchedAt
-    },
-
-    shouldRefetch(): boolean {
-      if (!this.lastFetchTimestamp) return true
-      return Date.now() - this.lastFetchTimestamp > STALE_THRESHOLD
-    },
-
-    updateRateLimit(rateLimit: { cost: number; remaining: number; resetAt: string }) {
-      this.rateLimitCost += rateLimit.cost
-      this.rateLimitRemaining = rateLimit.remaining
-      this.rateLimitResetAt = rateLimit.resetAt
-    },
-
-    async clearCache() {
-      if (!this.db) {
-        await this.initDB()
-      }
-      if (!this.db) return
-
-      try {
-        // Clear all stores
-        await this.db.clear('descriptions')
-        await this.db.clear('releases')
-        await this.db.clear('metadata')
-
-        // Reset store state
-        this.lastFetchTimestamp = null
-        this.cachedEtag = null
-        this.releases = []
-        this.additionalReleaseCursors = {}
-        this.additionalFetchQueue = []
-        this.additionalFetchCounts = {}
-        this.additionalFetchInProgress = false
-      } catch (error) {
-        console.error('Error clearing cache:', error)
-      }
-    },
-
-    async processRepositories(repositories: Array<{ node: RepositoryNode }>) {
-      if (!repositories.length) return 0
-
-      const startDate = new Date()
-      startDate.setMonth(startDate.getMonth() - 3)
-
-      const processedNodes = new WeakMap<RepositoryNode, boolean>()
-      const existingReleases = new Map(this.releases.map((r) => [r.id, r]))
-      let newReleasesCount = 0
-
-      // Process in smaller batches
-      for (let i = 0; i < repositories.length; i += BATCH_SIZES.PROCESSING) {
-        const batch = repositories.slice(i, i + BATCH_SIZES.PROCESSING)
-        const batchResults = await releaseProcessingHelpers.processResponseBatch(batch, {
-          startDate,
-          db: this.db,
-          existingReleases,
-          processedNodes,
-        })
-
-        // Merge new releases with existing ones and sort
-        this.releases = releaseProcessingHelpers.sortReleases(Array.from(existingReleases.values()))
-
-        newReleasesCount += batchResults.newCount
-        this.reposProcessed += batch.length
-
-        // Add small delay between batches
-        if (i + BATCH_SIZES.PROCESSING < repositories.length) {
-          await new Promise((resolve) => setTimeout(resolve, 100))
-        }
-      }
-
-      return newReleasesCount
-    },
-
-    async cleanup() {
-      if (this.db) {
-        this.db.close()
-        this.db = null
-      }
-      this.clearData()
-    },
-  },
-})
-
 export interface ReleaseObj {
   id: string
   name: string
   tagName: string
   url: string
   publishedAt: string
+  updatedAt?: string
+  descriptionLoaded?: boolean
   descriptionHTML: string
   isPrerelease: boolean
   isDraft: boolean
@@ -524,369 +126,479 @@ export interface ReleaseObj {
   }
 }
 
+interface GithubReleasesDBSchema {
+  descriptions: { key: string; value: string }
+  releases: { key: string; value: ReleaseObj & { cachedAt: number } }
+  metadata: { key: string; value: { lastFetchTimestamp: number } }
+}
+
+const STALE_THRESHOLD = 5 * 60 * 1000
+const METADATA_KEY = 'github-releases-metadata-v2'
+const descriptionKey = (release: ReleaseObj) =>
+  `${release.id}-${release.updatedAt || release.publishedAt}`
+const sortReleases = (releases: Iterable<ReleaseObj>) =>
+  [...releases].sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt))
+const errorMessage = (error: unknown) => {
+  if (
+    error &&
+    typeof error === 'object' &&
+    'data' in error &&
+    error.data &&
+    typeof error.data === 'object' &&
+    'message' in error.data &&
+    typeof error.data.message === 'string'
+  )
+    return error.data.message
+
+  if (
+    error &&
+    typeof error === 'object' &&
+    'message' in error &&
+    typeof error.message === 'string'
+  ) {
+    return error.message
+  }
+  return 'Could not contact GitHub. Try again.'
+}
+
+function quotaRetryAt(error: unknown): number | null {
+  if (!error || typeof error !== 'object' || !('data' in error)) return null
+  const response = error.data
+  if (
+    !response ||
+    typeof response !== 'object' ||
+    !('statusCode' in response) ||
+    response.statusCode !== 429
+  )
+    return null
+  const data = 'data' in response ? response.data : null
+  if (!data || typeof data !== 'object') return Date.now() + 60_000
+  const resetAt = 'resetAt' in data && typeof data.resetAt === 'number' ? data.resetAt : 0
+  const retryAfter =
+    'retryAfter' in data && typeof data.retryAfter === 'number' ? data.retryAfter * 1000 : 0
+  return Math.max(resetAt, Date.now() + (retryAfter > 0 ? retryAfter : 60_000))
+}
+
+export const useGithubStore = defineStore('github', {
+  state: () => ({
+    releases: [] as ReleaseObj[],
+    loading: false,
+    backgroundLoading: false,
+    error: null as string | null,
+    lastFetchTimestamp: null as number | null,
+    db: null as IDBPDatabase<GithubReleasesDBSchema> | null,
+    accountId: null as string | null,
+    reposProcessed: 0,
+    reposTotal: 0,
+    retries: 0,
+    retryAt: null as number | null,
+    rateLimitCost: 0,
+    rateLimitRemaining: 5000,
+    rateLimitResetAt: null as string | null,
+  }),
+  actions: {
+    clearData() {
+      this.releases = []
+      this.loading = false
+      this.backgroundLoading = false
+      this.error = null
+      this.lastFetchTimestamp = null
+      this.reposProcessed = 0
+      this.reposTotal = 0
+      this.retries = 0
+      this.retryAt = null
+      this.rateLimitCost = 0
+      this.rateLimitRemaining = 5000
+      this.rateLimitResetAt = null
+    },
+    async initDB(accountId: string) {
+      if (import.meta.server) return
+      if (this.accountId !== accountId) await this.cleanup()
+      this.accountId = accountId
+      if (this.db) return
+      try {
+        const db = await openDB<GithubReleasesDBSchema>(`github-releases-v3-${accountId}`, 1, {
+          upgrade(db) {
+            db.createObjectStore('descriptions')
+            db.createObjectStore('releases', { keyPath: 'id' })
+            db.createObjectStore('metadata')
+          },
+        })
+        if (this.accountId !== accountId) {
+          db.close()
+          return
+        }
+        this.db = db
+        const metadata = await db.get('metadata', METADATA_KEY)
+        if (this.db !== db) return
+        this.lastFetchTimestamp = metadata?.lastFetchTimestamp ?? null
+      } catch {
+        // Private browsing or a full disk must not prevent an in-memory feed.
+        if (this.accountId === accountId) this.db = null
+      }
+    },
+    async loadCachedReleases() {
+      if (!this.db) return
+      try {
+        const db = this.db
+        const cached = sortReleases(
+          await Promise.all(
+            (await db.getAll('releases')).map(async ({ cachedAt: _cachedAt, ...release }) => ({
+              ...toRaw(release),
+              descriptionHTML:
+                release.descriptionHTML ||
+                (await db.get('descriptions', descriptionKey(release))) ||
+                '',
+            })),
+          ),
+        )
+        if (this.db === db) this.releases = cached
+      } catch {
+        // The network can still supply a feed when local storage is unavailable.
+      }
+    },
+    async persistFeed() {
+      const fetchedAt = Date.now()
+      const accountId = this.accountId
+      if (this.db) {
+        try {
+          const tx = this.db.transaction(['releases', 'descriptions', 'metadata'], 'readwrite')
+          await tx.objectStore('releases').clear()
+          await tx.objectStore('descriptions').clear()
+          for (const release of this.releases) {
+            await tx
+              .objectStore('releases')
+              .put({ ...toRaw(release), descriptionHTML: '', cachedAt: fetchedAt })
+            if (release.descriptionLoaded) {
+              await tx
+                .objectStore('descriptions')
+                .put(release.descriptionHTML, descriptionKey(release))
+            }
+          }
+          await tx.objectStore('metadata').put({ lastFetchTimestamp: fetchedAt }, METADATA_KEY)
+          await tx.done
+        } catch {
+          return
+        }
+      }
+      if (this.accountId === accountId) this.lastFetchTimestamp = fetchedAt
+    },
+    updateRateLimit(rateLimit: { cost: number; remaining: number; resetAt: string } | null) {
+      if (!rateLimit) return
+      this.rateLimitCost += rateLimit.cost
+      this.rateLimitRemaining = rateLimit.remaining
+      this.rateLimitResetAt = rateLimit.resetAt
+      if (rateLimit.remaining <= 0)
+        this.retryAt = Date.parse(rateLimit.resetAt) || Date.now() + 60_000
+    },
+    async clearCache() {
+      if (this.db) {
+        await this.db.clear('releases')
+        await this.db.clear('descriptions')
+        await this.db.clear('metadata')
+      }
+      this.clearData()
+    },
+    async cleanup() {
+      this.db?.close()
+      this.db = null
+      this.accountId = null
+      this.clearData()
+    },
+  },
+})
+
 export const useGithub = () => {
   const store = useGithubStore()
-  const { loggedIn, session, fetch: fetchSession } = useUserSession()
-  const startingDate = new Date()
-  startingDate.setMonth(startingDate.getMonth() - 3)
+  const { loggedIn, session } = useUserSession()
+  const descriptionErrors = ref<Record<string, string>>({})
+  const pendingIds = new Set<string>()
+  let detailsTask: Promise<void> | null = null
+  let feedTask: Promise<void> | null = null
+  let generation = 0
+  let feedController: AbortController | null = null
+  let detailsController: AbortController | null = null
 
-  // Query execution moved server-side to avoid CORS and improve reliability
-
-  // Debounced batched details fetcher (client-only)
-  const pendingDetailIds = new Set<string>()
-  let detailsDebounceTimer: ReturnType<typeof setTimeout> | null = null
-  let detailsInFlight = false
-
-  const flushDetailsBatch = async () => {
-    if (import.meta.server) return
-    if (detailsInFlight) return
-    const ids = Array.from(pendingDetailIds).slice(0, 50)
-    if (ids.length === 0) return
-    ids.forEach((id) => pendingDetailIds.delete(id))
-    detailsInFlight = true
-    try {
-      const result = await fetchWithRetry(async () =>
-        $fetch<{ items: Array<{ id: string; descriptionHTML: string }> }>(
-          '/api/github/release-details',
-          { method: 'POST', body: { ids } },
-        ),
-      )
-      const items = result?.items || []
-      if (items.length && store.db) {
-        for (const it of items) {
-          const idx = store.releases.findIndex((r) => r.id === it.id)
-          if (idx !== -1) {
-            const rel = store.releases[idx]
-            if (!rel) continue
-            if (!rel.descriptionHTML) {
-              rel.descriptionHTML = it.descriptionHTML || ''
-              const descriptionKey = `${rel.id}-${rel.publishedAt}`
-              await store.db.put('descriptions', rel.descriptionHTML, descriptionKey)
+  const ensureDescriptions = (ids: string[]): Promise<void> => {
+    if (import.meta.server || !loggedIn.value) return Promise.resolve()
+    if (store.retryAt && store.retryAt > Date.now()) {
+      for (const id of ids) descriptionErrors.value[id] = 'GitHub API rate limit reached.'
+      return Promise.resolve()
+    }
+    const releases = new Map(store.releases.map((release) => [release.id, release]))
+    for (const id of ids) {
+      const release = releases.get(id)
+      if (release && !release.descriptionLoaded) pendingIds.add(id)
+    }
+    if (detailsTask) return detailsTask
+    const currentGeneration = generation
+    const controller = new AbortController()
+    detailsController = controller
+    detailsTask = Promise.resolve()
+      .then(async () => {
+        while (pendingIds.size && generation === currentGeneration) {
+          if (store.retryAt && store.retryAt > Date.now()) {
+            for (const id of pendingIds)
+              descriptionErrors.value[id] = 'GitHub API rate limit reached.'
+            pendingIds.clear()
+            return
+          }
+          const byId = new Map(store.releases.map((release) => [release.id, release]))
+          const batch = [...pendingIds].slice(0, 50)
+          batch.forEach((id) => pendingIds.delete(id))
+          const requested = batch.flatMap((id) => {
+            const release = byId.get(id)
+            return release && !release.descriptionLoaded ? [release] : []
+          })
+          if (!requested.length) continue
+          const versions = new Map(
+            requested.map((release) => [release.id, descriptionKey(release)]),
+          )
+          try {
+            const result = await $fetch<{
+              items: Array<{ id: string; descriptionHTML: string; updatedAt?: string }>
+              rateLimit?: GraphQLResponse['rateLimit'] | null
+            }>('/api/github/release-details', {
+              method: 'POST',
+              signal: controller.signal,
+              body: {
+                ids: requested.map((release) => release.id),
+                versions: Object.fromEntries(
+                  requested.map((release) => [
+                    release.id,
+                    release.updatedAt || release.publishedAt,
+                  ]),
+                ),
+              },
+              retry: false,
+            })
+            if (generation !== currentGeneration) return
+            store.updateRateLimit(result.rateLimit ?? null)
+            const currentReleases = new Map(store.releases.map((release) => [release.id, release]))
+            const returnedIds = new Set<string>()
+            for (const item of result.items) {
+              if (generation !== currentGeneration) return
+              const release = currentReleases.get(item.id)
+              if (!release || descriptionKey(release) !== versions.get(item.id)) continue
+              if (
+                item.updatedAt &&
+                Date.parse(item.updatedAt) < Date.parse(release.updatedAt || release.publishedAt)
+              )
+                continue
+              returnedIds.add(item.id)
+              if (item.updatedAt) release.updatedAt = item.updatedAt
+              release.descriptionHTML = item.descriptionHTML
+              release.descriptionLoaded = true
+              delete descriptionErrors.value[item.id]
+              if (store.db) {
+                try {
+                  const tx = store.db.transaction(['descriptions', 'releases'], 'readwrite')
+                  await tx
+                    .objectStore('descriptions')
+                    .put(item.descriptionHTML, descriptionKey(release))
+                  // Do not persist a partial refresh as a complete feed.
+                  if (await tx.objectStore('releases').get(release.id)) {
+                    await tx
+                      .objectStore('releases')
+                      .put({ ...toRaw(release), descriptionHTML: '', cachedAt: Date.now() })
+                  }
+                  await tx.done
+                } catch {
+                  /* Notes remain available in memory. */
+                }
+              }
+            }
+            if (generation !== currentGeneration) return
+            for (const release of requested) {
+              if (
+                !returnedIds.has(release.id) &&
+                descriptionKey(currentReleases.get(release.id) ?? release) ===
+                  versions.get(release.id)
+              )
+                descriptionErrors.value[release.id] = 'Release notes unavailable.'
+            }
+          } catch (error) {
+            if (generation !== currentGeneration) return
+            store.retryAt = quotaRetryAt(error) ?? store.retryAt
+            const currentReleases = new Map(store.releases.map((release) => [release.id, release]))
+            for (const release of requested) {
+              const current = currentReleases.get(release.id)
+              if (current && descriptionKey(current) === versions.get(release.id))
+                descriptionErrors.value[release.id] = errorMessage(error)
             }
           }
         }
-      }
-    } catch (e) {
-      console.error('Failed to populate release descriptions (batch)', e)
-    } finally {
-      detailsInFlight = false
-      // If there are more pending IDs accumulated during flight, schedule another flush soon
-      if (pendingDetailIds.size > 0) {
-        scheduleDetailsFlush(50)
-      }
-    }
-  }
-
-  const scheduleDetailsFlush = (delayMs = 150) => {
-    if (detailsDebounceTimer) return
-    detailsDebounceTimer = setTimeout(() => {
-      detailsDebounceTimer = null
-      // flush up to 50 per batch; further ones will reschedule automatically
-      void flushDetailsBatch()
-    }, delayMs)
-  }
-
-  const populateDescriptionsForMissing = async (limit = 20) => {
-    if (import.meta.server) return
-    const missing = store.releases
-      .filter((r) => !r.descriptionHTML || r.descriptionHTML.length === 0)
-      .slice(0, limit)
-    if (missing.length === 0) return
-    for (const m of missing) {
-      pendingDetailIds.add(m.id)
-    }
-    scheduleDetailsFlush(150)
-  }
-
-  let additionalFetchTask: Promise<void> | undefined
-
-  const scheduleRepoAdditionalFetch = (repoId: string, cursor: string | null) => {
-    if (!repoId) return
-    const count = store.additionalFetchCounts[repoId] || 0
-    if (count >= MAX_ADDITIONAL_BATCHES_PER_REPO) {
-      store.additionalReleaseCursors[repoId] = null
-      return
-    }
-    const validCursor = cursor || null
-    store.additionalReleaseCursors[repoId] = validCursor
-    if (!validCursor) return
-    if (!store.additionalFetchQueue.includes(repoId)) {
-      store.additionalFetchQueue.push(repoId)
-      if (!store.additionalFetchInProgress) additionalFetchTask = processAdditionalQueue()
-    }
-  }
-
-  const processAdditionalQueue = async () => {
-    if (import.meta.server) return
-    if (store.additionalFetchInProgress) return
-    store.additionalFetchInProgress = true
-    try {
-      while (store.additionalFetchQueue.length) {
-        const repoId = store.additionalFetchQueue.shift()
-        if (!repoId) continue
-        const cursor = store.additionalReleaseCursors[repoId]
-        if (!cursor) {
-          store.additionalReleaseCursors[repoId] = null
-          continue
-        }
-        const count = store.additionalFetchCounts[repoId] || 0
-        if (count >= MAX_ADDITIONAL_BATCHES_PER_REPO) {
-          store.additionalReleaseCursors[repoId] = null
-          continue
-        }
-        try {
-          const response = await fetchWithRetry(async () =>
-            $fetch<RepoReleasesResponse>('/api/github/repo-releases', {
-              method: 'POST',
-              body: {
-                repoId,
-                cursor,
-                limit: ADDITIONAL_RELEASE_BATCH_SIZE,
-                withDetails: false,
-              },
-            }),
-          )
-          const repoNode = response?.repository
-          if (!repoNode?.releases?.edges?.length) {
-            store.additionalReleaseCursors[repoId] = null
-            continue
-          }
-
-          const existingReleases = new Map(store.releases.map((r) => [r.id, r]))
-          const processedNodes = new WeakMap<RepositoryNode, boolean>()
-          await releaseProcessingHelpers.processResponseBatch([{ node: repoNode }], {
-            startDate: startingDate,
-            db: store.db,
-            existingReleases,
-            processedNodes,
-          })
-          store.releases = releaseProcessingHelpers.sortReleases(
-            Array.from(existingReleases.values()),
-          )
-
-          store.additionalFetchCounts[repoId] = count + 1
-
-          const nextCursor = repoNode.releases?.pageInfo?.hasNextPage
-            ? (repoNode.releases.pageInfo.endCursor ?? null)
-            : null
-          if (!nextCursor || nextCursor === cursor) {
-            store.additionalReleaseCursors[repoId] = null
-          } else {
-            store.additionalReleaseCursors[repoId] = nextCursor
-          }
-
-          if (response.rateLimit) {
-            store.updateRateLimit(response.rateLimit)
-          }
-
-          if (
-            nextCursor &&
-            nextCursor !== cursor &&
-            store.additionalReleaseCursors[repoId] &&
-            store.additionalFetchCounts[repoId] < MAX_ADDITIONAL_BATCHES_PER_REPO
-          ) {
-            store.additionalFetchQueue.push(repoId)
-          }
-        } catch (error) {
-          console.error('Failed to fetch additional repo releases', error)
-          store.error = 'Some release history could not be loaded. Try refreshing.'
-        }
-      }
-    } finally {
-      store.additionalFetchInProgress = false
-    }
-  }
-
-  const fetchWithRetry = async <T>(fn: () => Promise<T>, retries = 3, delay = 1000): Promise<T> => {
-    try {
-      return await fn()
-    } catch (error: any) {
-      if (retries === 0) throw error
-      store.retries++
-      await new Promise((resolve) => setTimeout(resolve, delay))
-      return fetchWithRetry(fn, retries - 1, delay * 2)
-    }
-  }
-
-  const processResponse = async (response: GraphQLResponse, cursor: string | null) => {
-    if (!response?.viewer?.starredRepositories) {
-      console.error('Invalid GitHub API response:', response)
-      throw new Error('Invalid response from GitHub API. Please try again.')
-    }
-
-    const { edges, pageInfo } = response.viewer.starredRepositories
-    store.updateRateLimit(response.rateLimit)
-
-    if (!Array.isArray(edges)) {
-      throw new Error('Invalid response format: edges is not an array')
-    }
-
-    // Set background loading when processing data
-    if (cursor) {
-      store.backgroundLoading = true
-    }
-
-    // Create a Map of existing releases for faster lookup
-    const existingReleases = new Map(store.releases.map((r) => [r.id, r]))
-    const processedNodes = new WeakMap<RepositoryNode, boolean>()
-
-    // Process repositories in parallel batches
-    const BATCH_SIZE = 5 // Process 5 repos at a time
-    for (let i = 0; i < edges.length; i += BATCH_SIZE) {
-      const batch = edges.slice(i, i + BATCH_SIZE)
-
-      // Process batch using shared helper
-      await releaseProcessingHelpers.processResponseBatch(batch, {
-        startDate: startingDate,
-        db: store.db,
-        existingReleases,
-        processedNodes,
       })
-
-      store.reposProcessed += batch.length
-
-      // Update the store's releases with all releases from the map
-      store.releases = releaseProcessingHelpers.sortReleases(Array.from(existingReleases.values()))
-    }
-
-    // Update metadata after successful fetch
-    const seenRepos = new Set<string>()
-    for (const edge of edges) {
-      const repo = edge?.node
-      if (!repo?.id) continue
-      if (seenRepos.has(repo.id)) continue
-      seenRepos.add(repo.id)
-      const nextCursor = repo.releases?.pageInfo?.hasNextPage
-        ? (repo.releases.pageInfo.endCursor ?? null)
-        : null
-      if (repo.releases?.pageInfo?.hasNextPage && nextCursor) {
-        scheduleRepoAdditionalFetch(repo.id, nextCursor)
-      } else {
-        store.additionalReleaseCursors[repo.id] = null
-      }
-    }
-
-    // Check rate limit and cost information
-    if (response.rateLimit.remaining <= 0) {
-      const resetDate = new Date(response.rateLimit.resetAt)
-      const resetIn = Math.ceil((resetDate.getTime() - Date.now()) / 1000 / 60)
-      store.setError(
-        new Error(
-          `GitHub API rate limit reached (${response.rateLimit.used}/${response.rateLimit.limit}, ` +
-            `Cost: ${store.rateLimitCost}). ` +
-            `Resets in ${resetIn} minutes at ${resetDate.toLocaleTimeString()}`,
-        ),
-      )
-      return // setError already resets loading states
-    }
-
-    // Opportunistically start fetching missing descriptions for top items
-    if (!import.meta.server) {
-      // fire-and-forget to avoid blocking pagination
-      // eslint-disable-next-line @typescript-eslint/no-floating-promises
-      populateDescriptionsForMissing(20)
-    }
-
-    await additionalFetchTask
-    if (pageInfo?.hasNextPage && pageInfo.endCursor && pageInfo.endCursor !== cursor) {
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-      await fetchReleases(pageInfo.endCursor)
-    } else {
-      await populateDescriptionsForMissing(20)
-      if (!store.error) await store.updateMetadata()
-      store.loading = false
-      store.backgroundLoading = false
-    }
+      .finally(() => {
+        if (generation === currentGeneration) detailsTask = null
+      })
+    return detailsTask
   }
 
-  const fetchReleases = async (cursor: string | null = null) => {
-    if (!loggedIn.value) {
-      console.error('GitHub auth failed:', {
-        loggedIn: loggedIn.value,
-        hasSession: !!session.value,
-        hasAccessToken: !!session.value?.user?.accessToken,
-      })
-      store.setError(new Error('Not authenticated'))
-      return
-    }
-
-    try {
-      if (!cursor) {
-        // Initial fetch
-        store.loading = true
-        store.backgroundLoading = false
+  const fetchReleases = (
+    cursor: string | null = null,
+    options: { force?: boolean } = {},
+  ): Promise<void> => {
+    if (feedTask) return feedTask
+    if (store.retryAt && store.retryAt > Date.now()) return Promise.resolve()
+    const currentGeneration = generation
+    const controller = new AbortController()
+    feedController = controller
+    feedTask = (async () => {
+      if (!loggedIn.value || !session.value?.user?.id) {
+        store.error = 'Not authenticated'
+        return
+      }
+      try {
+        await store.initDB(session.value.user.id)
+        if (generation !== currentGeneration) return
+        if (!store.releases.length) await store.loadCachedReleases()
+        if (generation !== currentGeneration) return
+        if (
+          !options.force &&
+          !cursor &&
+          store.lastFetchTimestamp &&
+          Date.now() - store.lastFetchTimestamp < STALE_THRESHOLD
+        )
+          return
         store.error = null
         store.reposProcessed = 0
-        store.retries = 0
-
-        if (!store.db) {
-          await store.initDB()
+        store.loading = !store.releases.length
+        store.backgroundLoading = !!store.releases.length
+        descriptionErrors.value = {}
+        const refreshed = new Map<string, ReleaseObj>()
+        const existing = new Map(store.releases.map((release) => [release.id, release]))
+        const startDate = new Date()
+        startDate.setMonth(startDate.getMonth() - 3)
+        const seenCursors = new Set<string>()
+        let nextCursor = cursor
+        do {
+          if (store.retryAt && store.retryAt > Date.now())
+            throw new Error('GitHub API rate limit reached. Please wait before retrying.')
+          const response = await $fetch<GraphQLResponse>('/api/github/releases', {
+            params: {
+              cursor: nextCursor,
+              pageSize: nextCursor ? 100 : 20,
+              withDetails: false,
+              refresh: options.force === true,
+            },
+            retry: false,
+            signal: controller.signal,
+          })
+          if (generation !== currentGeneration) return
+          const page = response.viewer?.starredRepositories
+          if (!page || !Array.isArray(page.edges)) throw new Error('Invalid response from GitHub.')
+          store.updateRateLimit(response.rateLimit)
+          store.reposTotal = page.totalCount
+          for (const { node: repo } of page.edges) {
+            const nodes = repo.releases.edges.map((edge) => edge.node)
+            if (repo.latestRelease && !nodes.some((node) => node.id === repo.latestRelease?.id))
+              nodes.push(repo.latestRelease)
+            for (const node of nodes) {
+              if (!node.publishedAt || node.isDraft || new Date(node.publishedAt) < startDate)
+                continue
+              const previous = refreshed.get(node.id) ?? existing.get(node.id)
+              const sameVersion =
+                previous &&
+                (previous.updatedAt || previous.publishedAt) ===
+                  (node.updatedAt || node.publishedAt)
+              const release: ReleaseObj = {
+                id: node.id,
+                name: node.name || node.tagName,
+                tagName: node.tagName,
+                url: node.url,
+                publishedAt: node.publishedAt,
+                updatedAt: node.updatedAt,
+                isDraft: node.isDraft,
+                isPrerelease: node.isPrerelease,
+                descriptionHTML:
+                  node.descriptionHTML || (sameVersion ? previous.descriptionHTML : '') || '',
+                descriptionLoaded:
+                  !!node.descriptionHTML || !!(sameVersion && previous.descriptionLoaded),
+                repo: {
+                  id: repo.id,
+                  name: repo.name,
+                  url: repo.url,
+                  description: repo.description || '',
+                  forkCount: repo.forkCount,
+                  visibility: repo.visibility,
+                  isArchived: repo.isArchived,
+                  pushedAt: repo.pushedAt,
+                  homepageUrl: repo.homepageUrl,
+                  stargazerCount: repo.stargazerCount,
+                  owner: repo.owner,
+                  primaryLanguage: repo.primaryLanguage,
+                  languages: repo.languages ?? { edges: [] },
+                  licenseInfo: repo.licenseInfo,
+                },
+              }
+              refreshed.set(node.id, release)
+            }
+          }
+          store.reposProcessed += page.edges.length
+          store.releases = sortReleases(new Map([...existing, ...refreshed]).values())
+          store.loading = false
+          nextCursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null
+          if (nextCursor && seenCursors.has(nextCursor))
+            throw new Error('GitHub returned a repeated page cursor. Try again.')
+          if (nextCursor) seenCursors.add(nextCursor)
+          store.backgroundLoading = !!nextCursor
+          if (nextCursor && response.rateLimit.remaining <= 0) {
+            throw new Error(
+              `GitHub API rate limit reached. Resets at ${new Date(response.rateLimit.resetAt).toLocaleTimeString()}.`,
+            )
+          }
+        } while (nextCursor)
+        // Remove unstarred/deleted releases only after every page succeeds.
+        // Preserve notes that arrived while subsequent pages were being fetched.
+        const displayed = new Map(store.releases.map((release) => [release.id, release]))
+        store.releases = sortReleases(
+          [...refreshed.keys()].flatMap((id) => {
+            const release = displayed.get(id)
+            return release ? [release] : []
+          }),
+        )
+        await store.persistFeed()
+      } catch (error) {
+        if (generation === currentGeneration) {
+          store.retryAt = quotaRetryAt(error) ?? store.retryAt
+          store.error = errorMessage(error)
         }
-
-        // Only show cached releases if we're not forcing a refresh
-        const hasCachedData = await store.loadCachedReleases()
-
-        if (hasCachedData && !store.shouldRefetch()) {
+      } finally {
+        if (generation === currentGeneration) {
           store.loading = false
           store.backgroundLoading = false
-          return
         }
-
-        // Set loading states based on cache status
-        if (hasCachedData && store.shouldRefetch()) {
-          store.loading = false
-          store.backgroundLoading = true
-        }
-
-        // Clear releases when starting a fresh fetch
-        if (!hasCachedData || store.shouldRefetch()) {
-          store.releases = []
-        }
-      } else {
-        // Subsequent fetches
-        store.backgroundLoading = true
       }
-
-      const response = await fetchWithRetry(async () =>
-        $fetch<GraphQLResponse>('/api/github/releases', {
-          params: {
-            cursor,
-            pageSize: store.pageSize,
-            withDetails: false,
-          },
-        }),
-      )
-
-      await processResponse(response, cursor)
-    } catch (error: any) {
-      if (error.message?.includes('Bad credentials')) {
-        console.error('GitHub auth error - bad credentials:', error)
-        // Session might be invalid, try to refresh it
-        await fetchSession()
-        if (!loggedIn.value) {
-          store.setError(new Error('Session expired. Please login again.'))
-        }
-      } else if (error.statusCode === 502 || error.message?.includes('502')) {
-        console.error('GitHub API temporarily unavailable (502):', error)
-        store.setError(new Error('GitHub API is temporarily unavailable. Retrying...'))
-        // Retry after a short delay for 502 errors
-        await new Promise((resolve) => setTimeout(resolve, 2000))
-        if (store.retries < 3) {
-          await fetchReleases(cursor)
-        }
-      } else {
-        console.error('Error fetching GitHub releases:', error)
-        store.setError(error)
-      }
-    }
+    })().finally(() => {
+      if (generation === currentGeneration) feedTask = null
+    })
+    return feedTask
   }
 
-  // Watch for session changes
-  watch(loggedIn, async (isLoggedIn) => {
-    if (!isLoggedIn) {
-      store.clearData()
-    }
+  const cancelRequests = () => {
+    generation++
+    feedController?.abort()
+    detailsController?.abort()
+    feedTask = null
+    detailsTask = null
+    pendingIds.clear()
+  }
+  const cleanup = async () => {
+    cancelRequests()
+    pendingIds.clear()
+    descriptionErrors.value = {}
+    await store.cleanup()
+  }
+  onScopeDispose(() => {
+    void cleanup()
   })
+  watch(
+    () => (loggedIn.value ? session.value?.user?.id : undefined),
+    async (id, previous) => {
+      if (id !== previous) await cleanup()
+    },
+  )
 
   return {
     releases: computed(() => store.releases),
@@ -894,11 +606,18 @@ export const useGithub = () => {
     backgroundLoading: computed(() => store.backgroundLoading),
     error: computed(() => store.error),
     reposProcessed: computed(() => store.reposProcessed),
+    reposTotal: computed(() => store.reposTotal),
     rateLimitRemaining: computed(() => store.rateLimitRemaining),
     rateLimitResetAt: computed(() => store.rateLimitResetAt),
+    retryAt: computed(() => store.retryAt),
     retries: computed(() => store.retries),
+    descriptionErrors,
+    ensureDescriptions,
     fetchReleases,
-    clearCache: async () => await store.clearCache(),
-    cleanup: async () => await store.cleanup(),
+    clearCache: async () => {
+      cancelRequests()
+      await store.clearCache()
+    },
+    cleanup,
   }
 }

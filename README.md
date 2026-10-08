@@ -2,11 +2,13 @@
 
 Track releases from your starred GitHub repositories. The app uses Nuxt 4, Vue 3, Pinia, Tailwind CSS 4, and shadcn-vue with Reka UI. GitHub OAuth and GraphQL requests run on the server; IndexedDB caches releases in the browser.
 
-Filter by **All**, **Stable**, or **Pre-releases**. The app remembers the release type on this browser and combines it with text search before grouping releases. Drafts are excluded. Search includes repository descriptions, owners, release names, tags, and release notes.
+Filter by **All**, **Stable**, or **Pre-releases**. The app remembers the release type on this browser and combines it with text search before grouping releases. Drafts are excluded. Search includes repository descriptions, owners, release names, tags, and loaded release notes. Use **Search all release notes** to include notes that have not been loaded yet.
 
 Hover over a repository name for a preview, or use its **About** button with a mouse, keyboard, or touch screen. The preview includes the description, language, stars, forks, archive status, license, and links. Expand long release notes to read them in the page without a separate scroll area.
 
-The feed covers the last three months. It fetches a limited recent history per repository (three releases initially and up to two additional batches of three by default), plus GitHub's latest stable release when it falls within that period. Follow the repository link for its full history. GitHub's prerelease flag determines the release type; version-name patterns are not used.
+The feed covers the last three months. It fetches up to nine recent releases per repository in one batched query, plus GitHub's latest stable release when it falls within that period. Follow the repository link for its full history. GitHub's prerelease flag determines the release type; version-name patterns are not used.
+
+Release notes load as cards enter the viewport. Refresh keeps the current feed visible and replaces its account-specific cache after all repository pages succeed. Errors preserve the cached feed. See [GitHub API measurements and decisions](docs/github-api-efficiency.md) for query costs, cache behavior, and reproducible benchmarks.
 
 ## Run locally
 

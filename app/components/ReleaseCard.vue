@@ -1,11 +1,27 @@
 <script setup lang="ts">
 import { format, intlFormatDistance } from 'date-fns'
+import { useElementVisibility } from '@vueuse/core'
 import type { ReleaseObj } from '~/composables/useGithub'
 
-const props = defineProps<{ release?: ReleaseObj; releases?: ReleaseObj[] }>()
+const props = defineProps<{
+  release?: ReleaseObj
+  releases?: ReleaseObj[]
+  retryDisabled?: boolean
+  descriptionErrors?: Record<string, string>
+}>()
+const emit = defineEmits<{ requestNotes: [ids: string[]] }>()
+const card = ref<HTMLElement | null>(null)
+const visible = useElementVisibility(card)
 const releases = computed(() =>
   props.releases?.length ? props.releases : props.release ? [props.release] : [],
 )
+watch([visible, releases], ([isVisible, items]) => {
+  if (isVisible)
+    emit(
+      'requestNotes',
+      items.filter((item) => !item.descriptionLoaded).map((item) => item.id),
+    )
+})
 const mainRelease = computed(() => {
   const release = releases.value[0]
   if (!release) throw new Error('A release card requires at least one release')
@@ -21,7 +37,7 @@ const relativeDate = computed(() =>
 </script>
 
 <template>
-  <Card class="release-card gap-4">
+  <Card ref="card" class="release-card gap-4">
     <CardHeader class="flex flex-row items-start gap-3">
       <Avatar class="size-9 shrink-0">
         <AvatarImage :src="mainRelease.repo.owner.avatarUrl" alt="" />
@@ -68,6 +84,25 @@ const relativeDate = computed(() =>
             :is-expanded="!!expanded[release.id]"
             @overflow-change="overflowing[release.id] = $event"
           />
+          <div v-else-if="descriptionErrors?.[release.id]" class="flex flex-col items-start gap-2">
+            <p class="text-sm text-muted-foreground">Could not load release notes.</p>
+            <Button
+              variant="outline"
+              size="sm"
+              :disabled="retryDisabled"
+              @click="emit('requestNotes', [release.id])"
+              >Retry notes</Button
+            >
+          </div>
+          <div
+            v-else-if="!release.descriptionLoaded"
+            class="flex flex-col gap-2"
+            role="status"
+            aria-label="Loading release notes"
+          >
+            <Skeleton class="h-4 w-3/4" />
+            <Skeleton class="h-4 w-1/2" />
+          </div>
           <p v-else class="text-sm text-muted-foreground">No release notes available.</p>
         </ClientOnly>
         <Button

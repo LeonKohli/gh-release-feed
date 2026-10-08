@@ -70,6 +70,27 @@ describe('release grouping', () => {
     expect(groups.map((group) => group.isSingleRelease)).toEqual([true, true])
   })
 
+  it('uses refreshed release notes and repository metadata when IDs and publication dates stay the same', () => {
+    const { groupReleases } = grouping()
+    const original = {
+      ...release('v1', '2026-10-08T10:00:00Z'),
+      updatedAt: '2026-10-08T10:00:00Z',
+      descriptionHTML: '<p>Original notes</p>',
+    }
+    groupReleases([original])
+    const updated = {
+      ...original,
+      updatedAt: '2026-10-08T11:00:00Z',
+      descriptionHTML: '<p>Corrected notes</p>',
+      repo: { ...original.repo, description: 'Updated project description' },
+    }
+
+    const groups = groupReleases([updated])
+
+    expect(groups[0]?.releases[0]?.descriptionHTML).toBe('<p>Corrected notes</p>')
+    expect(groups[0]?.releases[0]?.repo.description).toBe('Updated project description')
+  })
+
   it('starts a separate group after a three-hour gap', () => {
     const { groupReleases } = grouping()
 

@@ -29,7 +29,7 @@ it('restores separately fetched release notes from a fresh cache while offline',
   vi.stubGlobal('watch', watch)
   vi.stubGlobal('useUserSession', () => ({
     loggedIn: ref(true),
-    session: ref({ user: { accessToken: 'test-token' } }),
+    session: ref({ user: { id: 'test-user', accessToken: 'test-token' } }),
     fetch: async () => {},
   }))
   const publishedAt = new Date().toISOString()
@@ -93,9 +93,8 @@ it('restores separately fetched release notes from a fresh cache while offline',
   })
   const firstVisit = newClient()
   await firstVisit.fetchReleases()
-  await vi.waitFor(() => {
-    expect(firstVisit.releases.value[0]?.descriptionHTML).toBe(notes)
-  })
+  await firstVisit.ensureDescriptions(['release-1'])
+  expect(firstVisit.releases.value[0]?.descriptionHTML).toBe(notes)
   await firstVisit.cleanup()
   offline = true
 

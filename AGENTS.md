@@ -63,22 +63,15 @@ Exponential backoff for transient errors, rate limiting via `@octokit/plugin-thr
 
 ### Release grouping — `app/composables/useReleaseGroups.ts`
 
-Groups releases from the same repository within 2-hour windows. Memoized with cache invalidation. Date-based sort, repository name as secondary key.
+Groups releases from the same repository within 2-hour windows. Memoized by input-array identity so refreshed objects replace old metadata. Date-based sort, repository name as secondary key.
 
 ## Performance and rate limits
 
-Query shape: 50 repositories per GraphQL query, 5 releases per repository, top 3 languages per repository. Light query mode fetches releases without HTML descriptions for pagination.
+Query shape: 20 repositories on the first GraphQL page, then 100 per page; nine release summaries plus the latest stable release per repository. Release notes load in batches of up to 50 IDs as cards enter the viewport, or when the user searches all notes.
 
-Processing: 20 repositories in parallel. IndexedDB staleness threshold 5 minutes, auto-refresh when stale. Up to 3 retries for rate-limited requests with a 3x backoff multiplier on 429.
+IndexedDB caches are account-specific. A refresh preserves visible data and replaces the persisted feed only after all pages succeed. Note caches use release `updatedAt` versions, including successfully loaded empty notes. Explicit refresh bypasses both browser and server caches.
 
-Adaptive throttle by remaining rate limit:
-
-| Remaining | Delay |
-|---|---|
-| < 500 | 2000 ms |
-| < 1000 | 1000 ms |
-| < 2000 | 500 ms |
-| otherwise | 200 ms |
+The shared Octokit client retries transient failures at most twice. Authentication and quota errors reach the UI without client retry loops. See `docs/github-api-efficiency.md` when changing query shape, caching, or request scheduling.
 
 API cost per session is tracked and displayed.
 

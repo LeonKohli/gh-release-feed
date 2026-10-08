@@ -5,6 +5,8 @@ import {
   useDebounceFn,
   refDebounced,
   watchDebounced,
+  useNow,
+  useIntervalFn,
 } from '@vueuse/core'
 import { filterReleases, isReleaseType } from '~/lib/release-filters'
 
@@ -18,10 +20,15 @@ const {
   rateLimitRemaining,
   rateLimitResetAt,
   retries,
+  retryAt,
+  reposTotal,
+  descriptionErrors,
+  ensureDescriptions,
   fetchReleases,
-  clearCache,
 } = useGithub()
 const { groupReleases } = useReleaseGroups()
+const now = useNow({ scheduler: (callback) => useIntervalFn(callback, 1000) })
+const retryDisabled = computed(() => !!retryAt.value && retryAt.value > now.value.getTime())
 const page = ref(1)
 const perPage = 20
 const searchQuery = ref('')
@@ -37,6 +44,19 @@ const releaseType = computed({
 const filteredReleases = computed(() =>
   filterReleases(releases.value, releaseType.value, debouncedSearchQuery.value),
 )
+const searchableReleases = computed(() => filterReleases(releases.value, releaseType.value, ''))
+const missingNotesCount = computed(
+  () => searchableReleases.value.filter((release) => !release.descriptionLoaded).length,
+)
+const searchingNotes = ref(false)
+async function searchAllNotes() {
+  searchingNotes.value = true
+  try {
+    await ensureDescriptions(searchableReleases.value.map((release) => release.id))
+  } finally {
+    searchingNotes.value = false
+  }
+}
 const releaseGroups = computed(() => groupReleases(filteredReleases.value))
 const visibleReleaseGroups = computed(() => releaseGroups.value.slice(0, page.value * perPage))
 const hasMoreReleases = computed(
@@ -65,10 +85,9 @@ function resetFilters() {
   releaseType.value = 'all'
 }
 const handleRefresh = useDebounceFn(async () => {
-  if (isLoadingAny.value) return
+  if (isLoadingAny.value || retryDisabled.value) return
   page.value = 1
-  await clearCache()
-  await fetchReleases()
+  await fetchReleases(null, { force: true })
 }, 300)
 watch(
   [ready, loggedIn],
@@ -99,6 +118,7 @@ useHead({
         :rate-limit-remaining="rateLimitRemaining"
         :rate-limit-reset-at="rateLimitResetAt"
         :retries="retries"
+        :retry-disabled="retryDisabled"
         @refresh="handleRefresh"
         @logout="handleLogout"
       />
@@ -133,19 +153,33 @@ useHead({
               <p role="status" aria-live="polite" aria-atomic="true">
                 {{
                   isLoadingAny
-                    ? 'Loading release history…'
+                    ? `${filteredReleases.length} releases · ${reposProcessed}${reposTotal ? ` of ${reposTotal}` : ''} projects checked…`
                     : `${filteredReleases.length} ${filteredReleases.length === 1 ? 'release' : 'releases'} from ${projectCount} ${projectCount === 1 ? 'project' : 'projects'}`
                 }}
               </p>
               <p
-                title="Recent releases from each repository and its latest stable release, published within the past three months. Full histories are available on GitHub."
+                title="Up to nine recent releases from each repository plus its latest stable release, published within the past three months. Full histories are available on GitHub."
               >
-                Last 3 months · recent releases
+                Last 3 months · up to 9 recent releases per project
               </p>
             </div>
             <p v-if="searchQuery" class="text-sm text-muted-foreground">
               Search: <span class="font-medium break-words text-foreground">{{ searchQuery }}</span>
             </p>
+          </div>
+          <div
+            v-if="searchQuery && missingNotesCount"
+            class="flex flex-wrap items-center gap-2 text-sm text-muted-foreground"
+          >
+            <p>{{ missingNotesCount }} releases have notes that haven't been searched yet.</p>
+            <Button
+              variant="outline"
+              size="sm"
+              :disabled="searchingNotes || isLoadingAny || retryDisabled"
+              @click="searchAllNotes"
+            >
+              {{ searchingNotes ? 'Searching release notes…' : 'Search all release notes' }}
+            </Button>
           </div>
           <Alert v-if="error" variant="destructive">
             <Icon name="lucide:circle-alert" />
@@ -154,6 +188,7 @@ useHead({
               ><p>{{ error }}</p>
               <Button
                 v-if="!isLoadingAny"
+                :disabled="retryDisabled"
                 variant="outline"
                 size="sm"
                 class="self-start"
@@ -184,6 +219,9 @@ useHead({
               v-for="group in visibleReleaseGroups"
               :key="group.id"
               :releases="group.releases"
+              :description-errors="descriptionErrors"
+              :retry-disabled="retryDisabled"
+              @request-notes="ensureDescriptions"
             />
           </div>
           <Empty v-else-if="!error">

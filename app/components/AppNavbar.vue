@@ -9,6 +9,7 @@ const props = defineProps<{
   reposProcessed: number
   rateLimitRemaining: number
   rateLimitResetAt: string | null
+  retryDisabled?: boolean
   retries: number
 }>()
 const emit = defineEmits<{ 'update:searchQuery': [string]; refresh: []; logout: [] }>()
@@ -86,7 +87,12 @@ async function toggleSearch() {
                 variant="ghost"
                 size="icon"
                 aria-label="Refresh releases"
-                title="Refresh releases"
+                :disabled="retryDisabled"
+                :title="
+                  retryDisabled
+                    ? 'GitHub rate limit reached. Wait before retrying.'
+                    : 'Refresh releases'
+                "
                 @click="emit('refresh')"
                 ><Icon name="lucide:refresh-cw"
               /></Button>

@@ -1,9 +1,8 @@
-import { Octokit } from '@octokit/core'
-import { throttling } from '@octokit/plugin-throttling'
 import { useStorage } from 'nitropack/runtime/internal/storage'
+import { createGithubClient, handleGithubError, requireGithubAuth } from '../../utils/github'
 
 interface GraphQLNodesResponse {
-  nodes: Array<null | { __typename?: string; id?: string; descriptionHTML?: string }>
+  nodes: Array<null | { id?: string; descriptionHTML?: string; updatedAt?: string }>
   rateLimit: {
     cost: number
     limit: number
@@ -13,151 +12,124 @@ interface GraphQLNodesResponse {
   }
 }
 
-type DetailsCacheEntry = { id: string; descriptionHTML: string; expiresAt: number }
+type DescriptionItem = { id: string; descriptionHTML: string; updatedAt?: string }
+type DetailsCacheEntry = DescriptionItem & { expiresAt: number }
 
 export default defineEventHandler(async (event) => {
-  const session = await getUserSession(event)
-  if (!session?.user?.accessToken) {
-    throw createError({ statusCode: 401, statusMessage: 'Not authenticated' })
-  }
-  const user = session.user!
-  const accessToken = session.user.accessToken!
-
-  const body = await readBody<{ ids?: string[] }>(event)
-  const ids = Array.isArray(body?.ids) ? body!.ids.filter((v) => typeof v === 'string') : []
-  if (ids.length === 0) {
-    return { items: [], rateLimit: null }
-  }
+  const { user, accessToken } = await requireGithubAuth(event)
+  const body = await readBody<{ ids?: unknown; versions?: unknown }>(event)
+  const ids = Array.isArray(body?.ids)
+    ? [...new Set(body.ids.filter((id): id is string => typeof id === 'string' && id.length > 0))]
+    : []
+  if (ids.length === 0) return { items: [], rateLimit: null }
   if (ids.length > 50) {
     throw createError({ statusCode: 400, statusMessage: 'Too many IDs. Max 50 per request.' })
   }
+  const versions = new Map<string, string>()
+  if (body.versions !== undefined) {
+    if (!body.versions || typeof body.versions !== 'object' || Array.isArray(body.versions)) {
+      throw createError({
+        statusCode: 400,
+        statusMessage: 'versions must contain release timestamps',
+      })
+    }
+    const entries = Object.entries(body.versions)
+    if (entries.length > 50) {
+      throw createError({ statusCode: 400, statusMessage: 'Too many release versions. Max 50.' })
+    }
+    for (const [id, version] of entries) {
+      if (
+        !ids.includes(id) ||
+        typeof version !== 'string' ||
+        version.length > 64 ||
+        !Number.isFinite(Date.parse(version))
+      ) {
+        throw createError({ statusCode: 400, statusMessage: 'Invalid release version' })
+      }
+      versions.set(id, version)
+    }
+  }
 
   const storage = useStorage('cache')
-  const ttlSeconds = Number(process.env.GITHUB_DETAILS_TTL ?? '600')
-
-  const cacheKeys = ids.map((id) => `gh:release-details:${user.id}:${encodeURIComponent(id)}`)
+  const configuredTtl = Number(process.env.GITHUB_DETAILS_TTL ?? '600')
+  const ttlSeconds =
+    Number.isFinite(configuredTtl) && configuredTtl > 0 ? Math.ceil(configuredTtl) : 600
+  const cacheKey = (id: string) => {
+    const version = versions.get(id)
+    return `gh:release-details:${user.id}:${encodeURIComponent(id)}${version ? `:${encodeURIComponent(version)}` : ''}`
+  }
   const cachedEntries = await Promise.all(
-    cacheKeys.map((k) => storage.getItem<DetailsCacheEntry>(k)),
+    ids.map((id) => storage.getItem<DetailsCacheEntry>(cacheKey(id))),
   )
-
-  const items: Array<{ id: string; descriptionHTML: string }> = []
+  const items: DescriptionItem[] = []
   const missingIds: string[] = []
   const now = Date.now()
-  for (let idx = 0; idx < cachedEntries.length; idx++) {
-    const entry = cachedEntries[idx]
-    if (entry && entry.expiresAt > now && entry.descriptionHTML) {
-      items.push({ id: entry.id, descriptionHTML: entry.descriptionHTML })
+  for (const [index, id] of ids.entries()) {
+    const entry = cachedEntries[index]
+    if (entry && entry.expiresAt > now) {
+      items.push({
+        id: entry.id,
+        descriptionHTML: entry.descriptionHTML,
+        ...(entry.updatedAt ? { updatedAt: entry.updatedAt } : {}),
+      })
     } else {
-      const targetId = ids[idx]
-      if (targetId) {
-        missingIds.push(targetId)
-      }
+      missingIds.push(id)
     }
   }
   const cacheHits = items.length
-  const cacheMisses = missingIds.length
-
   let rateLimit: GraphQLNodesResponse['rateLimit'] | null = null
 
   if (missingIds.length > 0) {
-    const ThrottledOctokit = Octokit.plugin(throttling)
-    const octokit = new ThrottledOctokit({
-      auth: accessToken,
-      userAgent: 'gh-release-feed',
-      request: { timeout: 45_000 },
-      throttle: {
-        onRateLimit: (retryAfter: number, options: any, octokitInstance: any) => {
-          octokitInstance.log.warn(
-            `Request quota exhausted for request ${options.method} ${options.url}`,
-          )
-          if (options.request?.retryCount === 0) return true
-        },
-        onSecondaryRateLimit: (retryAfter: number, options: any, octokitInstance: any) => {
-          octokitInstance.log.warn(
-            `SecondaryRateLimit detected for request ${options.method} ${options.url}`,
-          )
-          if (options.request?.retryCount === 0) return true
-        },
-      },
-    })
-
-    const QUERY = `
-      query($ids: [ID!]!) {
-        nodes(ids: $ids) {
-          ... on Release { id descriptionHTML }
-        }
-        rateLimit { cost limit remaining resetAt used }
-      }
-    `
-
-    // Simple retry loop
-    const maxRetries = 3
-    let delay = 200
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        console.info(`[gh][details] cache MISS → fetching u=${user.id} ids=${missingIds.length}`)
-        const data = await octokit.graphql<GraphQLNodesResponse>(QUERY, {
-          ids: missingIds,
-          headers: { 'X-GitHub-Api-Version': '2022-11-28' },
-        })
-
-        rateLimit = data.rateLimit
-        const fetched = (data.nodes || [])
-          .filter(
-            (n): n is { id: string; descriptionHTML?: string } => !!n && typeof n.id === 'string',
-          )
-          .map((n) => ({ id: n.id, descriptionHTML: n.descriptionHTML || '' }))
-
-        // Store individually for better reuse
-        await Promise.all(
-          fetched.map((it) =>
-            storage.setItem(
-              `gh:release-details:${user.id}:${encodeURIComponent(it.id)}`,
+    const octokit = createGithubClient(accessToken, { retries: 2, timeout: 45_000 })
+    try {
+      const data = await octokit.graphql<GraphQLNodesResponse>(
+        `query($ids: [ID!]!) {
+          nodes(ids: $ids) { ... on Release { id descriptionHTML updatedAt } }
+          rateLimit { cost limit remaining resetAt used }
+        }`,
+        { ids: missingIds },
+      )
+      rateLimit = data.rateLimit
+      const fetched = data.nodes.flatMap((node) =>
+        node && typeof node.id === 'string'
+          ? [
               {
-                id: it.id,
-                descriptionHTML: it.descriptionHTML,
-                expiresAt: Date.now() + ttlSeconds * 1000,
+                id: node.id,
+                descriptionHTML: node.descriptionHTML ?? '',
+                ...(node.updatedAt ? { updatedAt: node.updatedAt } : {}),
               },
-              { ttl: ttlSeconds },
-            ),
-          ),
-        )
-
-        items.push(...fetched)
-        break
-      } catch (err: any) {
-        const status = err?.status || err?.response?.status
-        const message = err?.message || 'GitHub API error'
-        if ([500, 502, 503, 504].includes(status) && attempt < maxRetries) {
-          await new Promise((r) => setTimeout(r, delay))
-          delay *= 2
-          continue
-        }
-        throw createError({ statusCode: status || 500, statusMessage: message })
-      }
+            ]
+          : [],
+      )
+      await Promise.all(
+        fetched.map(async (item) => {
+          const requestedVersion = versions.get(item.id)
+          if (requestedVersion && item.updatedAt && requestedVersion !== item.updatedAt) return
+          return storage.setItem(
+            cacheKey(item.id),
+            { ...item, expiresAt: Date.now() + ttlSeconds * 1000 },
+            { ttl: ttlSeconds },
+          )
+        }),
+      )
+      items.push(...fetched)
+    } catch (error) {
+      return handleGithubError(error)
     }
   }
 
-  const fetchedCount = items.length - cacheHits
-  setResponseHeader(
-    event,
-    'Cache-Control',
-    `private, max-age=${ttlSeconds}, stale-while-revalidate=60`,
-  )
+  setResponseHeader(event, 'Cache-Control', 'private, no-store')
   setResponseHeader(
     event,
     'X-Cache-Details',
-    `hits=${cacheHits};misses=${cacheMisses};fetched=${fetchedCount}`,
+    `hits=${cacheHits};misses=${missingIds.length};fetched=${items.length - cacheHits}`,
   )
   if (rateLimit) {
     setResponseHeader(event, 'X-GH-RateLimit-Remaining', String(rateLimit.remaining))
     setResponseHeader(event, 'X-GH-RateLimit-Cost', String(rateLimit.cost))
-    setResponseHeader(event, 'X-GH-RateLimit-ResetAt', String(rateLimit.resetAt))
-    console.info(
-      `[gh][details] hits=${cacheHits} misses=${cacheMisses} fetched=${fetchedCount} rateLimit cost=${rateLimit.cost} remaining=${rateLimit.remaining} resetAt=${rateLimit.resetAt}`,
-    )
+    setResponseHeader(event, 'X-GH-RateLimit-ResetAt', rateLimit.resetAt)
   } else {
-    console.info(`[gh][details] hits=${cacheHits} misses=${cacheMisses} fetched=${fetchedCount}`)
+    setResponseHeader(event, 'X-GH-RateLimit-Cost', '0')
   }
   return { items, rateLimit }
 })

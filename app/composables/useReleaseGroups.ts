@@ -21,18 +21,13 @@ export interface ReleaseGroup {
 export const useReleaseGroups = createSharedComposable(() => {
   const TIME_THRESHOLD = 2 // hours
 
-  // Create a cache map for memoization
-  const cache = new Map<string, ReleaseGroup[]>()
-
-  const getCacheKey = (releases: ReleaseObj[]): string => {
-    return releases.map((r) => `${r.id}-${r.publishedAt}`).join('|')
-  }
+  let cache = new WeakMap<ReleaseObj[], ReleaseGroup[]>()
 
   const groupReleases = (releases: ReleaseObj[]): ReleaseGroup[] => {
     if (!releases.length) return []
 
     // Check cache first
-    const cacheKey = getCacheKey(releases)
+    const cacheKey = releases
     if (cache.has(cacheKey)) {
       return cache.get(cacheKey)!
     }
@@ -140,7 +135,7 @@ export const useReleaseGroups = createSharedComposable(() => {
 
   // Add cache clearing method
   const clearCache = () => {
-    cache.clear()
+    cache = new WeakMap()
   }
 
   return {

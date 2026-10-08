@@ -21,7 +21,7 @@ beforeEach(() => {
   vi.stubGlobal('watch', watch)
   vi.stubGlobal('useUserSession', () => ({
     loggedIn: ref(true),
-    session: ref({ user: { accessToken: 'test-token' } }),
+    session: ref({ user: { id: 'test-user', accessToken: 'test-token' } }),
     fetch: async () => {},
   }))
 })
@@ -92,15 +92,20 @@ function starredPage(repositories: ReturnType<typeof repository>[], cursor: stri
 }
 
 describe('GitHub release fetching', () => {
-  it('loads stable releases after prereleases using a short opaque cursor and keeps repository details', async () => {
-    vi.stubGlobal('$fetch', async (url: string, options?: { body?: { cursor?: string } }) => {
+  it('loads recent stable releases and repository details without separate history requests', async () => {
+    const requestedPaths: string[] = []
+    vi.stubGlobal('$fetch', async (url: string) => {
+      requestedPaths.push(url)
       if (url === '/api/github/releases') {
         return starredPage([
-          repository([release('rc-3', true), release('rc-2', true), release('rc-1', true)], 'Mw'),
+          repository(
+            [
+              ...Array.from({ length: 8 }, (_, index) => release(`rc-${8 - index}`, true)),
+              release('stable-1'),
+            ],
+            'Mw',
+          ),
         ])
-      }
-      if (url === '/api/github/repo-releases' && options?.body?.cursor === 'Mw') {
-        return { repository: repository([release('stable-1')]), rateLimit }
       }
       throw new Error(`Unexpected API request: ${url}`)
     })
@@ -123,18 +128,19 @@ describe('GitHub release fetching', () => {
       homepageUrl: 'https://example.com/project',
       primaryLanguage: { name: 'Java', color: '#b07219' },
     })
+    expect(requestedPaths).toEqual(['/api/github/releases'])
     expect(client.loading.value).toBe(false)
     expect(client.backgroundLoading.value).toBe(false)
   })
 
-  it('continues through an empty starred page to releases on a later page', async () => {
+  it('continues through an empty starred page with short opaque cursors to a later page', async () => {
     vi.stubGlobal(
       '$fetch',
       async (_url: string, options?: { params?: { cursor?: string | null } }) => {
         const cursor = options?.params?.cursor
-        if (!cursor) return starredPage([repository([release('first')])], 'first-page')
-        if (cursor === 'first-page') return starredPage([], 'empty-page')
-        if (cursor === 'empty-page') return starredPage([repository([release('later')])])
+        if (!cursor) return starredPage([repository([release('first')])], 'Mw')
+        if (cursor === 'Mw') return starredPage([], 'Mg')
+        if (cursor === 'Mg') return starredPage([repository([release('later')])])
         throw new Error(`Unexpected cursor: ${cursor}`)
       },
     )
