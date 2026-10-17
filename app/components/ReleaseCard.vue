@@ -7,6 +7,7 @@ import type { ReleaseObj } from '~/composables/useGithub'
 const props = defineProps<{
   release?: ReleaseObj
   releases?: ReleaseObj[]
+  newReleaseIds?: ReadonlySet<string>
   noteSearch?: string
   retryDisabled?: boolean
   descriptionErrors?: Record<string, string>
@@ -83,6 +84,9 @@ const relativeDate = computed(() =>
               >{{ release.name || release.tagName }}</a
             >
           </h2>
+          <Badge v-if="newReleaseIds?.has(release.id)" variant="outline">
+            New<span class="sr-only"> since your last completed visit</span>
+          </Badge>
           <Badge v-if="release.isPrerelease" variant="secondary">Pre-release</Badge>
           <Badge v-if="release.isDraft" variant="outline">Draft</Badge>
         </div>

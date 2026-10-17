@@ -15,9 +15,14 @@ import {
   type SearchScope,
 } from '~/lib/release-filters'
 
-const { loggedIn, clear, ready } = useUserSession()
+const { loggedIn, clear, ready, session } = useUserSession()
 const {
   releases,
+  lastReviewedAt,
+  newReleaseIds,
+  canCompleteVisit,
+  completeVisit,
+  visitStorageUnavailable,
   loading,
   backgroundLoading,
   error,
@@ -110,7 +115,7 @@ const handleRefresh = useDebounceFn(async () => {
   await fetchReleases(null, { force: true })
 }, 300)
 watch(
-  [ready, loggedIn],
+  [ready, loggedIn, () => session.value?.user?.id],
   async ([sessionReady, signedIn]) => {
     if (sessionReady && signedIn) await fetchReleases()
   },
@@ -206,6 +211,13 @@ useHead({
               >
             </p>
           </div>
+          <FeedVisitStatus
+            :last-reviewed-at="lastReviewedAt"
+            :new-count="filteredReleases.filter((release) => newReleaseIds.has(release.id)).length"
+            :can-complete="canCompleteVisit"
+            :storage-unavailable="visitStorageUnavailable"
+            @complete="completeVisit"
+          />
           <div
             v-if="searchScope === 'notes' && debouncedSearchQuery.trim() && missingNotesCount"
             class="flex flex-wrap items-center gap-2 text-sm text-muted-foreground"
@@ -265,6 +277,7 @@ useHead({
               v-for="group in visibleReleaseGroups"
               :key="group.id"
               :releases="group.releases"
+              :new-release-ids="newReleaseIds"
               :description-errors="descriptionErrors"
               :retry-disabled="retryDisabled"
               :note-search="searchScope === 'notes' ? debouncedSearchQuery : ''"

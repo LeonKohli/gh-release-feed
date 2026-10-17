@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { openDB, type IDBPDatabase } from 'idb'
 import { computed, onScopeDispose, ref, toRaw, watch } from 'vue'
+import { isNewRelease, validVisitTimestamp } from '~/lib/release-visits'
 
 interface RepositoryNode {
   id: string
@@ -129,11 +130,15 @@ export interface ReleaseObj {
 interface GithubReleasesDBSchema {
   descriptions: { key: string; value: string }
   releases: { key: string; value: ReleaseObj & { cachedAt: number } }
-  metadata: { key: string; value: { lastFetchTimestamp: number } }
+  metadata: {
+    key: string
+    value: { lastFetchTimestamp?: number; fetchedThrough?: number; lastReviewedAt?: number }
+  }
 }
 
 const STALE_THRESHOLD = 5 * 60 * 1000
 const METADATA_KEY = 'github-releases-metadata-v2'
+const VISIT_KEY = 'github-release-feed-visit-v1'
 const descriptionKey = (release: ReleaseObj) =>
   `${release.id}-${release.updatedAt || release.publishedAt}`
 const sortReleases = (releases: Iterable<ReleaseObj>) =>
@@ -186,6 +191,9 @@ export const useGithubStore = defineStore('github', {
     backgroundLoading: false,
     error: null as string | null,
     lastFetchTimestamp: null as number | null,
+    lastReviewedAt: null as number | null,
+    fetchedThrough: null as number | null,
+    visitStorageUnavailable: false,
     db: null as IDBPDatabase<GithubReleasesDBSchema> | null,
     accountId: null as string | null,
     reposProcessed: 0,
@@ -203,6 +211,9 @@ export const useGithubStore = defineStore('github', {
       this.backgroundLoading = false
       this.error = null
       this.lastFetchTimestamp = null
+      this.lastReviewedAt = null
+      this.fetchedThrough = null
+      this.visitStorageUnavailable = false
       this.reposProcessed = 0
       this.reposTotal = 0
       this.retries = 0
@@ -229,12 +240,23 @@ export const useGithubStore = defineStore('github', {
           return
         }
         this.db = db
-        const metadata = await db.get('metadata', METADATA_KEY)
+        const [metadata, visit] = await Promise.all([
+          db.get('metadata', METADATA_KEY),
+          db.get('metadata', VISIT_KEY),
+        ])
         if (this.db !== db) return
         this.lastFetchTimestamp = metadata?.lastFetchTimestamp ?? null
+        this.fetchedThrough = validVisitTimestamp(
+          metadata?.fetchedThrough ?? metadata?.lastFetchTimestamp,
+        )
+        this.lastReviewedAt = validVisitTimestamp(visit?.lastReviewedAt)
+        this.visitStorageUnavailable = false
       } catch {
         // Private browsing or a full disk must not prevent an in-memory feed.
-        if (this.accountId === accountId) this.db = null
+        if (this.accountId === accountId) {
+          this.db = null
+          this.visitStorageUnavailable = true
+        }
       }
     },
     async loadCachedReleases() {
@@ -257,7 +279,8 @@ export const useGithubStore = defineStore('github', {
         // The network can still supply a feed when local storage is unavailable.
       }
     },
-    async persistFeed() {
+    async persistFeed(fetchedThrough: number) {
+      this.fetchedThrough = fetchedThrough
       const fetchedAt = Date.now()
       const accountId = this.accountId
       if (this.db) {
@@ -275,13 +298,39 @@ export const useGithubStore = defineStore('github', {
                 .put(release.descriptionHTML, descriptionKey(release))
             }
           }
-          await tx.objectStore('metadata').put({ lastFetchTimestamp: fetchedAt }, METADATA_KEY)
+          await tx
+            .objectStore('metadata')
+            .put({ lastFetchTimestamp: fetchedAt, fetchedThrough }, METADATA_KEY)
           await tx.done
         } catch {
           return
         }
       }
       if (this.accountId === accountId) this.lastFetchTimestamp = fetchedAt
+    },
+    async completeVisit() {
+      const boundary = this.fetchedThrough
+      const accountId = this.accountId
+      const db = this.db
+      if (!accountId || boundary === null || this.loading || this.backgroundLoading || this.error)
+        return
+      let reviewedAt = Math.max(this.lastReviewedAt ?? 0, boundary)
+      let unavailable = !db
+      if (db) {
+        try {
+          // A second tab must never move the account's review boundary backwards.
+          const tx = db.transaction('metadata', 'readwrite')
+          const previous = await tx.store.get(VISIT_KEY)
+          reviewedAt = Math.max(reviewedAt, validVisitTimestamp(previous?.lastReviewedAt) ?? 0)
+          await tx.store.put({ lastReviewedAt: reviewedAt }, VISIT_KEY)
+          await tx.done
+        } catch {
+          unavailable = true
+        }
+      }
+      if (this.accountId !== accountId || this.db !== db) return
+      this.lastReviewedAt = reviewedAt
+      this.visitStorageUnavailable = unavailable
     },
     updateRateLimit(rateLimit: { cost: number; remaining: number; resetAt: string } | null) {
       if (!rateLimit) return
@@ -295,9 +344,12 @@ export const useGithubStore = defineStore('github', {
       if (this.db) {
         await this.db.clear('releases')
         await this.db.clear('descriptions')
-        await this.db.clear('metadata')
+        await this.db.delete('metadata', METADATA_KEY)
       }
+      const { lastReviewedAt, visitStorageUnavailable } = this
       this.clearData()
+      this.lastReviewedAt = lastReviewedAt
+      this.visitStorageUnavailable = visitStorageUnavailable
     },
     async cleanup() {
       this.db?.close()
@@ -315,6 +367,7 @@ export const useGithub = () => {
   const pendingIds = new Set<string>()
   let detailsTask: Promise<void> | null = null
   let feedTask: Promise<void> | null = null
+  const fetchingFeed = ref(false)
   let generation = 0
   let feedController: AbortController | null = null
   let detailsController: AbortController | null = null
@@ -441,6 +494,8 @@ export const useGithub = () => {
   ): Promise<void> => {
     if (feedTask) return feedTask
     if (store.retryAt && store.retryAt > Date.now()) return Promise.resolve()
+    fetchingFeed.value = true
+    const fetchedThrough = Date.now()
     const currentGeneration = generation
     const controller = new AbortController()
     feedController = controller
@@ -558,7 +613,7 @@ export const useGithub = () => {
             return release ? [release] : []
           }),
         )
-        await store.persistFeed()
+        await store.persistFeed(fetchedThrough)
       } catch (error) {
         if (generation === currentGeneration) {
           store.retryAt = quotaRetryAt(error) ?? store.retryAt
@@ -571,7 +626,10 @@ export const useGithub = () => {
         }
       }
     })().finally(() => {
-      if (generation === currentGeneration) feedTask = null
+      if (generation === currentGeneration) {
+        feedTask = null
+        fetchingFeed.value = false
+      }
     })
     return feedTask
   }
@@ -581,6 +639,7 @@ export const useGithub = () => {
     feedController?.abort()
     detailsController?.abort()
     feedTask = null
+    fetchingFeed.value = false
     detailsTask = null
     pendingIds.clear()
   }
@@ -600,7 +659,24 @@ export const useGithub = () => {
     },
   )
 
+  const canCompleteVisit = computed(
+    () => !!store.accountId && store.fetchedThrough !== null && !fetchingFeed.value && !store.error,
+  )
   return {
+    lastReviewedAt: computed(() => store.lastReviewedAt),
+    visitStorageUnavailable: computed(() => store.visitStorageUnavailable),
+    canCompleteVisit,
+    completeVisit: async () => {
+      if (canCompleteVisit.value) await store.completeVisit()
+    },
+    newReleaseIds: computed(
+      () =>
+        new Set(
+          store.releases
+            .filter((release) => isNewRelease(release.publishedAt, store.lastReviewedAt))
+            .map((release) => release.id),
+        ),
+    ),
     releases: computed(() => store.releases),
     loading: computed(() => store.loading),
     backgroundLoading: computed(() => store.backgroundLoading),

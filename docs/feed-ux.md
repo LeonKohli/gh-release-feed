@@ -36,8 +36,33 @@ Die [mobile Ansicht](repository-filter-mobile.png) zeigt die kompakte Leiste mit
 
 ## Nächste sinnvolle Erweiterungen
 
-Diese Vorschläge sind noch nicht umgesetzt. Die Reihenfolge folgt dem beschriebenen Arbeitsablauf:
+Die Reihenfolge folgt dem beschriebenen Arbeitsablauf. Der erste Punkt ist inzwischen umgesetzt; die übrigen Vorschläge bleiben offen:
 
-1. **Seit dem letzten Besuch.** Ein gespeicherter Besuchszeitpunkt macht neue Veröffentlichungen sofort erkennbar. Dafür muss feststehen, wann ein Besuch als abgeschlossen gilt und wie der erste Besuch behandelt wird. Den Zeitpunkt je Konto speichern.
+1. **Seit dem letzten Besuch (umgesetzt am 17. Oktober).** Neue Veröffentlichungen werden relativ zum letzten ausdrücklich abgeschlossenen Besuch je Konto markiert. Die genaue Semantik steht unten.
 2. **Repos im Feed stummschalten.** Projekte mit vielen Veröffentlichungen können andere verdrängen. Eine lokale Auswahl erlaubt, ihre Releases auszublenden und die GitHub-Sterne trotzdem zu behalten.
 3. **Zeitraum auswählen.** Woche, Monat und drei Monate erleichtern unterschiedlich häufige Besuche. Innerhalb des vorhandenen Zeitfensters braucht der Filter keine weiteren API-Anfragen. Ältere Historien erfordern einen eigenen Abruf und einen deutlich benannten größeren Umfang.
+
+## Last completed visit (October 17, 2026)
+
+A visit is completed only by **Mark feed reviewed**. Opening, refreshing, scrolling,
+searching, changing filters, loading more cards, and leaving the page never advance it.
+On the first visit no releases receive a New badge; an explanation asks the user to
+establish their first review boundary explicitly. Until then, returning remains a first visit.
+
+Completion covers the entire successfully loaded feed, including filtered-out releases
+and cards beyond the current pagination limit. The action states this scope and is disabled
+while fetching or after a failed/partial fetch. It records the start of the most recent
+successful fetch (or that snapshot's persisted boundary when using the cache), rather than
+the click time. Publications strictly after that boundary remain new, including publications
+that arrive during fetching or reading. An equal timestamp is considered reviewed.
+A refresh can advance the available snapshot, but never completes a visit by itself.
+This is a feed-level acknowledgement, not a claim that every release was read.
+
+Each account stores its boundary in its existing IndexedDB metadata store under
+`github-release-feed-visit-v1`, separate from cache freshness. Clearing cached releases
+preserves completed visits. Writes are monotonic across tabs; already-open tabs retain
+their current indicators until their next account initialization. Unavailable storage
+keeps the feed and review action usable in memory and displays a persistence limitation.
+Progress is local to this browser, not synchronized across devices. Badges apply to each
+release within grouped cards; the polite summary counts matching releases across all pages.
+Repository muting remains separate: no repository preferences or filters are changed here.
